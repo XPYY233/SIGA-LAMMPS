@@ -1,0 +1,110 @@
+id: nvt_equilibration
+title: NVT equilibration of an LJ fluid
+summary: Equilibrate a Lennard-Jones system at fixed temperature.
+
+specification: |
+  Equilibrate a three-dimensional Lennard-Jones system in the canonical (NVT)
+  ensemble. Use a cubic box with periodic boundaries, reduced Lennard-Jones
+  units, and a face-centred cubic starting lattice at a reduced density of
+  0.8. Set the temperature to 1.0 using a Nose-Hoover thermostat, with a
+  timestep of 0.004. Equilibrate for at least 20000 steps so the thermostat has
+  time to reach its target, and report the temperature, pressure and total
+  energy every 200 steps.
+
+reference: nvt_equilibration/in.nvt
+
+required_files:
+  - in.*
+
+level1:
+  required_commands: [units, atom_style, lattice, region, create_box, create_atoms, pair_style, pair_coeff, velocity, fix, timestep, thermo, run]
+  required_patterns:
+    - id: units_lj
+      description: "reduced Lennard-Jones units are requested"
+      pattern: '^\s*units\s+lj\b'
+    - id: atom_style_atomic
+      description: "point particles only; nothing here has bonds or charge"
+      pattern: '^\s*atom_style\s+atomic\b'
+    - id: periodic_boundaries
+      description: "periodic in all three directions"
+      pattern: '^\s*boundary\s+p\s+p\s+p\b'
+    - id: pair_style_lj
+      description: "a truncated Lennard-Jones interaction"
+      pattern: '^\s*pair_style\s+lj/cut\b'
+
+level3:
+  - id: ensemble_is_nvt
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+nvt\b'
+    description: the task asks for the canonical ensemble specifically
+  - id: target_temperature
+    kind: pattern_number
+    command: velocity
+    argument: 2
+    expected: 1.0
+    tolerance: 0.05
+    description: the requested reduced temperature
+  - id: damping_scales_with_timestep
+    kind: damping_ratio
+    command: nvt
+    argument: 3
+    reference_command: timestep
+    minimum_ratio: 20
+    maximum_ratio: 2000
+    description: >
+      Tdamp is in TIME UNITS, so it must scale with the timestep. A damping
+      constant of 100 (reasonable at timestep 1.0) is 25000 timesteps at 0.004
+      and the thermostat will barely act.
+  - id: timestep
+    kind: pattern_number
+    command: timestep
+    argument: 0
+    expected: 0.004
+    tolerance: 0.0
+  - id: run_length_meets_request
+    kind: run_steps_min
+    minimum: 20000
+    description: the specification asks for at least this many steps
+  - id: thermo_interval
+    kind: pattern_number
+    command: thermo
+    argument: 0
+    expected: 200
+    tolerance: 0.0
+
+level4:
+  - id: temperature_converges
+    kind: log_range
+    column: Temp
+    after_fraction: 0.5
+    min: 0.85
+    max: 1.15
+    description: >
+      The point of equilibration is that the temperature sits at the target.
+      A run that oscillates far from it, or drifts, has not equilibrated.
+  - id: pressure_reasonable
+    description: "no NaN or infinity in the pressure or energy columns"
+    kind: log_finite
+    columns: [Press, TotEng]
+  - id: no_atom_loss
+    description: "a stable system must not lose atoms"
+    kind: log_forbidden
+    pattern: 'Lost atoms|Out of range atoms'
+  - id: energy_drift_bounded
+    kind: log_stability
+    column: TotEng
+    max_relative_drift: 0.5
+    description: a thermostatted system should not show runaway energy
+
+  - id: genuinely_equilibrated
+    kind: human_review_required
+    description: >
+      A temperature inside the target band does not prove equilibration: a system
+      can sit at the right average temperature while still drifting. Establishing
+      that it is genuinely equilibrated needs a dynamical observable such as an
+      energy or velocity-autocorrelation decay, whose analysis window is not
+      deterministically checkable here.
+
+notes: >
+  The classic error is treating Tdamp as a step count rather than a time, which
+  produces a run that looks correct structurally and never equilibrates.

@@ -1,0 +1,116 @@
+id: lj_melt
+title: Lennard-Jones melting
+summary: Melt a perfect LJ crystal and confirm the transition is under way.
+
+# The researcher's request, verbatim as it would be given to the agent.
+# Task specifications are FROZEN: every adapter configuration sees this exact
+# text, or the ablation compares different tasks rather than different adapters.
+specification: |
+  Simulate the melting of a three-dimensional Lennard-Jones crystal.
+  Start from a perfect FCC lattice at a reduced density of 0.8442, with
+  periodic boundaries in all directions, using Lennard-Jones reduced units.
+  Equilibrate at a reduced temperature of 1.2, which is above the melting
+  point, and run long enough for the crystal to melt.
+  Use a velocity-Verlet integrator with a timestep of 0.005.
+  Report temperature, potential energy, total energy and pressure every 100
+  steps.
+
+# A reference implementation for construction, debugging and controlled
+# comparison. It is NOT the unique correct answer: a script that differs in fix
+# IDs, ordering or naming is not a failure if it runs and complies.
+reference: lj_melt/in.melt
+
+required_files:
+  - in.*            # the agent must produce an input script
+
+# Level 1: deterministic structural requirements. These are evaluated by the
+# SAME adapter/cli.py validate the agent's tool and the S gate call.
+level1:
+  required_commands: [units, atom_style, lattice, region, create_box, create_atoms, pair_style, pair_coeff, velocity, fix, timestep, thermo, run]
+  required_patterns:
+    - id: units_lj
+      pattern: '^\s*units\s+lj\b'
+      description: reduced Lennard-Jones units are requested
+    - id: atom_style_atomic
+      pattern: '^\s*atom_style\s+atomic\b'
+      description: a point-particle style is required; nothing here has bonds or charge
+    - id: fcc_lattice
+      pattern: '^\s*lattice\s+fcc\b'
+      description: the specification asks for an FCC crystal
+    - id: periodic_boundaries
+      pattern: '^\s*boundary\s+p\s+p\s+p\b'
+      description: periodic in all three directions
+    - id: pair_style_lj
+      pattern: '^\s*pair_style\s+lj/cut\b'
+      description: a truncated Lennard-Jones interaction
+
+# Level 3: does it run the task that was asked for?
+level3:
+  - id: reduced_density
+    kind: lattice_density
+    expected: 0.8442
+    tolerance: 0.001
+    description: >
+      lattice fcc takes a reduced NUMBER DENSITY, not a lattice constant, and
+      LAMMPS converts it (a = (4/rho*)^(1/3)). Writing the lattice constant
+      instead silently builds a system ~10x too dilute.
+  - id: target_temperature
+    kind: pattern_number
+    command: velocity
+    argument: 2
+    expected: 1.2
+    tolerance: 0.05
+    description: the requested reduced temperature
+  - id: timestep
+    kind: pattern_number
+    command: timestep
+    argument: 0
+    expected: 0.005
+    tolerance: 0.0
+    description: the specified timestep; omitting it leaves it at 0.0
+  - id: integrator_is_velocity_verlet
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+nve\b'
+    description: velocity-Verlet as requested
+  - id: thermo_interval
+    kind: pattern_number
+    command: thermo
+    argument: 0
+    expected: 100
+    tolerance: 0.0
+    description: report every 100 steps
+  - id: run_length_sufficient
+    kind: run_steps_min
+    minimum: 1000
+    description: >
+      Melting needs time. This is a floor, not a target: a few hundred steps at
+      this temperature reports an equilibrating crystal, not a melted one.
+
+# Level 4: bounded, automatic physical sanity. Anything not reliably checkable
+# is marked human_review_required rather than scored.
+level4:
+  - id: temperature_reached
+    kind: log_range
+    column: Temp
+    after_fraction: 0.5
+    min: 0.6
+    max: 2.0
+    description: the run should sit near the requested temperature, not at zero or runaway
+  - id: no_atom_loss
+    kind: log_forbidden
+    pattern: 'Lost atoms|Bond atoms missing|Out of range atoms'
+    description: a melting run must not lose atoms
+  - id: energy_finite
+    kind: log_finite
+    columns: [TotEng, E_pair]
+    description: no NaN or infinity in the energy columns
+  - id: melting_observable
+    kind: human_review_required
+    description: >
+      Whether the crystal actually melted (rather than merely heated) needs a
+      structural observable such as a diffusion or order parameter. Not judged
+      automatically.
+
+notes: >
+  The most common failure is the lattice density semantics: `lattice fcc 1.6796`
+  looks like a lattice constant and produces a gas, not a crystal.

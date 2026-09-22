@@ -1,0 +1,108 @@
+id: nanoindentation
+title: Nanoindentation with a spherical indenter
+summary: Press a spherical indenter into a thermalized crystal surface.
+
+specification: |
+  Simulate nanoindentation of a three-dimensional Lennard-Jones crystal with a
+  spherical indenter. Use reduced Lennard-Jones units. Build a face-centred
+  cubic crystal at a reduced density of 0.85 with a free surface in the z
+  direction and periodic boundaries in x and y. Thermalize the substrate at a
+  reduced temperature of 0.3 with a Nose-Hoover thermostat before indenting.
+  Then press a spherical indenter of radius 5.0 into the surface in the negative
+  z direction, moving it at a constant velocity, and record the temperature,
+  energy and the force on the indenter every 100 steps.
+  Use a timestep of 0.003.
+
+reference: nanoindentation/in.indent
+
+required_files:
+  - in.*
+
+level1:
+  required_commands: [units, atom_style, lattice, region, create_box, create_atoms, pair_style, pair_coeff, velocity, fix, timestep, thermo, run]
+  required_patterns:
+    - id: units_lj
+      description: "reduced Lennard-Jones units are requested"
+      pattern: '^\s*units\s+lj\b'
+    - id: atom_style_atomic
+      description: "point particles only; nothing here has bonds or charge"
+      pattern: '^\s*atom_style\s+atomic\b'
+    - id: pair_style_lj
+      description: "a truncated Lennard-Jones interaction"
+      pattern: '^\s*pair_style\s+lj/cut\b'
+    - id: free_surface_in_z
+      pattern: '^\s*boundary\s+p\s+p\s+[fms]\b'
+      description: indentation needs a free surface, not a periodic z direction
+
+level3:
+  - id: indenter_defined
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+indent\b'
+    description: the requested indenter must actually be applied
+  - id: spherical_indenter
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+indent\s+\S+\s+sphere\b'
+    description: the specification asks for a spherical indenter specifically
+  - id: indenter_radius
+    kind: regex_value
+    command: indent
+    token: 'sphere'
+    value_index: 3
+    expected: 5.0
+    tolerance: 0.1
+    description: the specified indenter radius
+  - id: substrate_is_thermostatted
+    kind: regex_any
+    patterns: ['\bnvt\b', '\bnve\b', '\bnpt\b']
+    description: an unthermostatted substrate just heats and softens locally
+  - id: indenter_group_is_not_the_substrate
+    kind: fix_group_distinct
+    fix_command: indent
+    description: >
+      The indenter must act on its own group. Applying `fix indent` to the whole
+      simulation pushes every atom and destroys the substrate.
+  - id: target_temperature
+    kind: pattern_number
+    command: velocity
+    argument: 2
+    expected: 0.3
+    tolerance: 0.05
+  - id: timestep
+    kind: pattern_number
+    command: timestep
+    argument: 0
+    expected: 0.003
+    tolerance: 0.0
+  - id: run_length_sufficient
+    description: "the indenter needs enough steps to actually penetrate"
+    kind: run_steps_min
+    minimum: 2000
+
+level4:
+  - id: temperature_bounded
+    kind: log_range
+    column: Temp
+    after_fraction: 0.3
+    min: 0.1
+    max: 1.5
+    description: >
+      Indentation heats the contact region. A large excursion means the
+      indentation is too fast or the timestep too large.
+  - id: no_atom_loss
+    description: "a stable indentation must not lose atoms"
+    kind: log_forbidden
+    pattern: 'Lost atoms|Out of range atoms'
+  - id: energy_finite
+    description: "no NaN or infinity in the energy columns"
+    kind: log_finite
+    columns: [TotEng, E_pair]
+  - id: hardness_analysis
+    kind: human_review_required
+    description: >
+      Deriving hardness from the force-displacement curve needs a contact-area
+      model and a chosen fit region, neither of which is checkable here.
+
+notes: >
+  The substrate must be thermalized before indentation, and the indenter must be
+  a separate group. Applying the indenter to `all` is the most destructive
+  single-line mistake available in this task.
