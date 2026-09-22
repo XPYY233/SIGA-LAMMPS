@@ -248,21 +248,63 @@ Tools (all over MCP, no `hpc_run_shell`): `hpc_upload_workspace`,
 
 Frozen tasks (5 classes from the brief → the paper's 9-task set is the model):
 LJ melting, NVT equilibration, MSD diffusion, uniaxial tension, nanoindentation.
-Each has: NL specification, required files, expected key commands, reference
-input, validation criteria.
+Each has an NL specification, required files, expected key commands, a reference
+input, and validation criteria.
 
-Metrics per the brief: input completeness, deterministic validation pass rate,
-LAMMPS initialization success, LAMMPS execution success, parameter correctness,
-runtime, agent tool calls, LLM token usage, failure category.
+**Evaluation follows the mandated four-level model** (`docs/design-principles.md`
+§7), *not* the paper's two-stage metric. The paper scored structural similarity
+plus an LLM judge; the principles forbid treating reference similarity as the
+primary metric, because functionally equivalent LAMMPS scripts legitimately
+differ in IDs, naming, ordering, and numerical settings.
 
-Two evaluation stages as in the paper: **stage 1 structural** (deterministic,
-11–15 per-task criteria) and **stage 2 value correctness**. The paper used an
-LLM judge for stage 2; we additionally have something the paper did not — real
-execution — so "did LAMMPS actually initialize and run" becomes a hard,
-non-LLM signal.
+| Level | Question | Mechanism |
+|---|---|---|
+| 1 Static | Is the workspace structurally sound? | the X validator, unchanged — one implementation, no second copy for scoring |
+| 2 Runtime | Does it actually run? | real LAMMPS + SLURM; non-LLM and hard |
+| 3 Task compliance | Is it running the task that was asked for? | deterministic per-task checkers (ensemble, target T, duration, observable computed **and** output, structure/potential actually used) |
+| 4 Physical sanity | Are results physically plausible? | bounded automatic checks; anything else is marked `human_review_required` |
 
-The four configs are the four presets, driven through the same headless path with
-identical tasks, model, and inference settings.
+**Level 4 is not a correctness claim.** An LLM may not assert physical validity
+without a reliable basis; where the check is unreliable the run is marked for
+human review rather than scored.
+
+**Level 1 doubles as X.** Scoring does not reimplement the validator: the
+benchmark calls the same `adapter/cli.py validate` that the agent's tool and the
+S gate call. Divergence between "what the agent was told" and "what it was
+scored on" would make the whole ablation uninterpretable.
+
+**Ground truth is a reference, not the answer.** It is used for task
+construction, expected commands and settings, compliance checking, debugging, and
+controlled comparison. A script that differs textually but is runtime-successful,
+task-compliant, and physically sane is **not** a failure.
+
+**Failure taxonomy** (`docs/design-principles.md` §9), recorded per run rather
+than collapsed into one score:
+
+```
+knowledge_error      syntax_error          command_order_error
+missing_command      missing_file          bad_parameter
+wrong_units          wrong_ensemble        invalid_reference
+premature_termination runtime_error         physical_instability
+task_noncompliance   unknown
+```
+
+**Audit record** per run (§11): task_id, run_id, model and settings, adapter
+configuration, M version/hash, retrieval results, tool calls, validator results,
+termination attempts, generated files, SLURM script, job ID, LAMMPS log, runtime
+status, evaluation results (all four levels), token usage, wall-clock time,
+failure category. Any failure must answer *what failed, and at which layer* —
+not `score = 0`.
+
+**Controlled comparison invariants** (§10): same model and version, same harness,
+same specification, same benchmark, same available files, same HPC environment,
+same resource limits, same inference settings, **same maximum trajectory
+budget**, same evaluation pipeline. The four presets make the adapter
+configuration the only intended variable.
+
+Reported as *capability* versus *reliability floor*, not as a single aggregate:
+the core question is whether DeepSeekHarness already authors LAMMPS capably while
+failing unreliably, and which failure modes each of M, R, X, S reduces.
 
 ### Web app
 
