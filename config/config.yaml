@@ -1,0 +1,94 @@
+# SIGA-LAMMPS committed policy and defaults.
+#
+# This file is VERSIONED and contains no secrets and no machine-specific paths.
+# Anything that differs per deployment (host alias, account, remote paths,
+# module names) belongs in the git-ignored `.env` instead.
+#
+# Division of responsibility:
+#   config.yaml  non-secret policy, thresholds, and hard ceilings — committed
+#   .env         deployment specifics and secrets — never committed
+#
+# Resource ceilings are the MINIMUM of the two sources (see config/loader.py),
+# so neither file can unilaterally raise a limit the other tightened.
+
+memory:
+  # The M primer. Kept as a plain Markdown document, read verbatim.
+  path: adapter/memory/lammps_memory.md
+  # Hard size budget in characters. The harness applies NO prompt token cap and
+  # never truncates an always-on section, so this assertion is the only guard
+  # against silent prompt bloat. Every request pays this cost.
+  max_chars: 4200
+
+validator:
+  # Deterministic only — no LLM participates in validation.
+  # Findings are ordered by severity; S blocks on `errors`, not on `warnings`.
+  block_on_warnings: false
+  # A script longer than this is almost certainly not a benchmark task.
+  max_lines: 400
+  # Commands that must appear for ANY valid LAMMPS input script.
+  universal_required:
+    - units
+    - atom_style
+    - run
+  # Only these styles are supported in v1; anything else is a warning, not an
+  # error, so an unusual-but-valid script is not falsely rejected.
+  supported_atom_styles:
+    - atomic
+    - charge
+    - molecular
+    - full
+  supported_unit_styles:
+    - lj
+    - real
+    - metal
+    - si
+    - cgs
+    - electron
+    - micro
+    - nano
+
+retrieval:
+  persist_dir: data/index
+  top_k: 5
+  # Three collections, mirroring the paper's LAMMPS port.
+  collections:
+    - examples     # LAMMPS example scripts
+    - docs         # documentation RST
+    - syntax       # command syntax extracted from the source tree
+  # Corpora are NOT committed (large + upstream-licensed). `make corpus` builds
+  # them; `make index` embeds them.
+  corpus_dir: data/raw
+
+slurm:
+  # Hard ceilings. The agent may REQUEST less; it can never exceed these.
+  # Effective value = min(this, .env), enforced in hpc/slurm.py.
+  ceilings:
+    max_nodes: 1
+    max_ntasks: 64
+    max_walltime: "02:00:00"
+  # Ceilings for a job the agent did not explicitly size.
+  defaults:
+    nodes: 1
+    ntasks: 8
+    walltime: "00:30:00"
+
+lammps:
+  # Local executable used by the offline validation and smoke-test stage.
+  # Overridable by SIGA_LAMMPS_LOCAL_BIN in .env.
+  local_bin: lmp
+  # A generated run must reach this stage to count as "LAMMPS initialized".
+  init_success_marker: "Setting up Verlet run"
+  run_success_marker: "Total wall time"
+
+benchmark:
+  # Frozen task set. These five classes are the whole of v1's scope.
+  tasks_dir: benchmark/tasks
+  ground_truth_dir: benchmark/ground_truth
+  runs_dir: benchmark/runs
+  # The four ablation configurations, by agent-preset id.
+  # Identical LLM, identical harness; only the mounted adapter differs.
+  configurations:
+    - vanilla
+    - m
+    - mr
+    - mrsx
