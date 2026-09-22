@@ -17,7 +17,18 @@ memory:
   # Hard size budget in characters. The harness applies NO prompt token cap and
   # never truncates an always-on section, so this assertion is the only guard
   # against silent prompt bloat. Every request pays this cost.
-  max_chars: 4200
+  #
+  # Set from measurement, not guesswork. v1 measures 7566 chars (~1891 tokens at
+  # the harness's CHARS_PER_TOKEN = 4), so the budget is that plus ~10% headroom.
+  # An earlier draft picked 4200 before the content existed; fitting it would
+  # have meant dropping either the ten labelled pitfalls or the task patterns,
+  # which is exactly what the paper's M exists to supply. For scale, ~1900 tokens
+  # is smaller than the harness's own system prompt plus tool schemas, so this is
+  # a proportionate cost rather than an open-ended one.
+  #
+  # Lower this only alongside a deliberate decision to cut content. Any growth
+  # fails tests/test_memory.py, which reports the actual cost.
+  max_chars: 8400
 
 validator:
   # Deterministic only — no LLM participates in validation.
