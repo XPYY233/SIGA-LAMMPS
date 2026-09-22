@@ -273,6 +273,7 @@ class RetrievalSettings:
 
     persist_dir: Path
     corpus_dir: Path
+    model_cache_dir: Path
     collections: tuple[str, ...]
     top_k: int
 
@@ -449,9 +450,19 @@ def load_settings(
     )
 
     # ----- R -----
+    # The corpus is a LAMMPS checkout, which lives somewhere specific on this
+    # machine, so .env may override the committed default path.
+    corpus_override = _env_str(env, "SIGA_LAMMPS_CORPUS")
     retrieval = RetrievalSettings(
         persist_dir=_resolve(root, str(_require(raw, "retrieval.persist_dir", "config.yaml"))),
-        corpus_dir=_resolve(root, str(_require(raw, "retrieval.corpus_dir", "config.yaml"))),
+        corpus_dir=(
+            Path(_expand(corpus_override))
+            if corpus_override
+            else _resolve(root, str(_require(raw, "retrieval.corpus_dir", "config.yaml")))
+        ),
+        model_cache_dir=_resolve(
+            root, str(_require(raw, "retrieval.model_cache_dir", "config.yaml"))
+        ),
         collections=_as_str_tuple(
             _require(raw, "retrieval.collections", "config.yaml"), "retrieval.collections"
         ),

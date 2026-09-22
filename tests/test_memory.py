@@ -75,7 +75,10 @@ REQUIRED_TOPICS: dict[str, tuple[str, ...]] = {
     "system creation": ("lattice", "region", "create_box", "create_atoms"),
     "read_data": ("read_data",),
     "force field": ("pair_style", "pair_coeff"),
-    "neighbor": ("neighbor", "neigh_modify"),
+    # `neighbor` belongs in M's ordering skeleton; `neigh_modify` delay/check
+    # tuning does not — it is retrievable detail, and adding it would push a
+    # task-independent but low-frequency knob into always-on context.
+    "neighbor": ("neighbor",),
     "velocity": ("velocity",),
     "integrators": ("nve", "nvt", "npt"),
     "compute": ("compute",),
@@ -93,13 +96,13 @@ def test_primer_covers_required_topic(primer: str, topic: str, keywords: tuple[s
         assert keyword.lower() in lowered, f"M must cover {topic!r}: missing {keyword!r}"
 
 
-# The paper's LAMMPS port names these pitfalls explicitly; M is where they live.
+# The paper's LAMMPS port names these pitfalls explicitly, and they are the kind
+# of high-frequency, task-independent mistake that belongs always-on.
 REQUIRED_PITFALLS: dict[str, tuple[str, ...]] = {
     "LJ lattice density semantics": ("reduced", "number density"),
     "region ordering": ("region", "create_box"),
     "unfix before switching integrators": ("unfix",),
-    "SLLOD Couette pattern": ("sllod",),
-    "MSD compute syntax": ("msd", "com yes"),
+    "timestep default": ("0.0",),
 }
 
 
@@ -110,19 +113,70 @@ def test_primer_carries_named_pitfall(primer: str, pitfall: str, keywords: tuple
         assert keyword.lower() in lowered, f"M must carry pitfall {pitfall!r}: missing {keyword!r}"
 
 
-BENCHMARK_TASKS: tuple[str, ...] = (
-    "melting",
-    "equilibration",
-    "msd",
-    "tension",
-    "nanoindentation",
-)
+def test_primer_gives_tool_usage_guidance(primer: str) -> None:
+    """M must tell the agent *when* to reach for R and X, not just exist.
+
+    Without this, an agent that does not know it should search is no better off
+    than one with no retrieval layer at all.
+    """
+    lowered = primer.lower()
+    assert "search_lammps" in primer
+    assert "validate_lammps_input" in primer
+    # Guidance, not merely a mention: it must say when to call them.
+    assert "before" in lowered
 
 
-@pytest.mark.parametrize("task", BENCHMARK_TASKS)
-def test_primer_covers_each_benchmark_task(primer: str, task: str) -> None:
-    """M must say something specific about each of the five in-scope tasks."""
-    assert task in primer.lower(), f"M must cover benchmark task {task!r}"
+def test_primer_ends_with_a_completion_checklist(primer: str) -> None:
+    """A checkable finishing list, so "done" has a definition the agent can use.
+
+    This is advisory and complements S; it does not replace the enforced gate.
+    """
+    lowered = primer.lower()
+    assert "before you finish" in lowered or "checklist" in lowered
+    assert primer.count("- [ ]") >= 4, "the checklist needs actual checkable items"
+
+
+# --------------------------------------------------------------------------- #
+# the M/R boundary
+# --------------------------------------------------------------------------- #
+
+#: Content that belongs in R, not M. The project rule (docs/design-principles.md
+#: §2): knowledge that is long, task-specific, or reliably retrievable is
+#: retrieved on demand. M is for high-frequency procedural knowledge only.
+#:
+#: Note the boundary is about *recipes*, not *pitfalls*. "compute msd needs
+#: com yes" is a mistake and stays in M; a step-by-step MSD walkthrough is a
+#: recipe and belongs in R. This test exists because the cheapest way to break
+#: the boundary is to append "just one more useful thing" to an always-on file.
+MUST_NOT_APPEAR_IN_M: dict[str, str] = {
+    "nanoindentation": "a per-task recipe; retrieve fix indent via R",
+    "uniaxial tension": "a per-task recipe; retrieve fix deform via R",
+    "melting temperature": "a per-task value; belongs in the task specification",
+    "# example": "a worked example block; that is what R returns",
+}
+
+
+@pytest.mark.parametrize(("needle", "reason"), sorted(MUST_NOT_APPEAR_IN_M.items()))
+def test_task_specific_knowledge_stays_out_of_m(primer: str, needle: str, reason: str) -> None:
+    assert needle not in primer.lower(), (
+        f"M contains {needle!r}, which is out of scope: {reason}. "
+        "Always-on context is billed on every request, and task-specific detail "
+        "belongs in R where it is fetched only when needed."
+    )
+
+
+def test_m_stays_within_its_token_ceiling(primer: str) -> None:
+    """The M/R boundary, expressed as the project's token ceiling.
+
+    M is allowed up to 2000 tokens. At the harness's CHARS_PER_TOKEN = 4 that is
+    8000 characters. A breach means knowledge is being kept always-on that
+    should be retrieved on demand.
+    """
+    tokens = len(primer) / 4
+    assert len(primer) <= 8000, (
+        f"M is {len(primer)} chars (~{tokens:.0f} tokens), over the 2000-token "
+        "ceiling. Move detail to R rather than growing M."
+    )
 
 
 def test_primer_warns_about_the_timestep_default(primer: str) -> None:

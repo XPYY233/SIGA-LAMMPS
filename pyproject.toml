@@ -29,3 +29,7 @@ packages = ["config", "adapter"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --strict-markers"
+markers = [
+    "real_corpus: needs a real LAMMPS source checkout; skips when absent",
+    "slow: takes more than a few seconds (index builds, model loads)",
+]

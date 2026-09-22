@@ -42,7 +42,7 @@ const TASK_VARIABLE = 'siga_task'
 export interface Config {
   /** Primer path. Defaults to `<repo>/adapter/memory/lammps_memory.md`. */
   memoryPath?: string
-  /** Hard character budget. Defaults to 8400, matching config/config.yaml. */
+  /** Hard character budget. Defaults to 8000, matching config/config.yaml. */
   maxChars?: number
   /**
    * Active benchmark task id, exposed to the primer as `{{siga_task}}`.
@@ -53,7 +53,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   memoryPath: z.string(),
-  maxChars: z.natural().default(8400),
+  maxChars: z.natural().default(8000),
   activeTask: z.string(),
 })
 
@@ -89,7 +89,7 @@ export function apply(ctx: Context, config: Config): void {
     throw new Error(`[siga-lammps] the M primer at ${memoryPath} is empty`)
   }
 
-  const maxChars = config.maxChars ?? 8400
+  const maxChars = config.maxChars ?? 8000
   if (primer.length > maxChars) {
     throw new Error(
       `[siga-lammps] the M primer is ${primer.length} chars, over its ${maxChars} budget. ` +

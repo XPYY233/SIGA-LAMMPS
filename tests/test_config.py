@@ -144,6 +144,7 @@ def _write_config(tmp_path: Path, max_nodes: int, max_ntasks: int, walltime: str
               block_on_warnings: false
             retrieval:
               persist_dir: data/index
+              model_cache_dir: data/models
               corpus_dir: data/raw
               collections: [examples, docs, syntax]
               top_k: 5

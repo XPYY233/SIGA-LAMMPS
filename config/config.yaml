@@ -15,20 +15,24 @@ memory:
   # The M primer. Kept as a plain Markdown document, read verbatim.
   path: adapter/memory/lammps_memory.md
   # Hard size budget in characters. The harness applies NO prompt token cap and
-  # never truncates an always-on section, so this assertion is the only guard
-  # against silent prompt bloat. Every request pays this cost.
+  # never truncates an always-on section, so this is the only guard against
+  # silent prompt bloat. Every request pays this cost.
   #
-  # Set from measurement, not guesswork. v1 measures 7566 chars (~1891 tokens at
-  # the harness's CHARS_PER_TOKEN = 4), so the budget is that plus ~10% headroom.
-  # An earlier draft picked 4200 before the content existed; fitting it would
-  # have meant dropping either the ten labelled pitfalls or the task patterns,
-  # which is exactly what the paper's M exists to supply. For scale, ~1900 tokens
-  # is smaller than the harness's own system prompt plus tool schemas, so this is
-  # a proportionate cost rather than an open-ended one.
+  # This value ENCODES the project's ceiling for M: 2000 tokens. At the harness's
+  # CHARS_PER_TOKEN = 4 that is 8000 characters. It is a design bound, not a
+  # measurement.
   #
-  # Lower this only alongside a deliberate decision to cut content. Any growth
-  # fails tests/test_memory.py, which reports the actual cost.
-  max_chars: 8400
+  # M holds high-frequency procedural knowledge: rules, ordering, unit
+  # conventions, integrator patterns, output guidance, common fatal mistakes,
+  # tool guidance, a completion checklist. Anything long, task-specific, or
+  # reliably retrievable belongs in R — see docs/design-principles.md §2. A
+  # growth past this budget means knowledge is being kept always-on that should
+  # be retrieved on demand.
+  #
+  # The primer measures 6255 chars (~1563 tokens), leaving ~436 tokens of
+  # headroom. tests/test_memory.py fails on growth, fails if the budget drifts
+  # far above the content, and asserts task-specific recipes stay out entirely.
+  max_chars: 8000
 
 validator:
   # Deterministic only — no LLM participates in validation.
@@ -60,14 +64,20 @@ validator:
 
 retrieval:
   persist_dir: data/index
+  # Where the ONNX embedding model is cached. ChromaDB defaults to
+  # ~/.cache/chroma; we keep it inside the project instead, so the cache is
+  # reproducible, trivially removable, and does not write to $HOME.
+  # Fetched once on the first index build; retrieval is offline afterwards.
+  model_cache_dir: data/models
   top_k: 5
   # Three collections, mirroring the paper's LAMMPS port.
   collections:
     - examples     # LAMMPS example scripts
     - docs         # documentation RST
     - syntax       # command syntax extracted from the source tree
-  # Corpora are NOT committed (large + upstream-licensed). `make corpus` builds
-  # them; `make index` embeds them.
+  # The corpus is a LAMMPS source checkout, not a committed artifact: it is
+  # large and upstream-licensed. This is only a default — the real path is
+  # deployment-specific and normally comes from SIGA_LAMMPS_CORPUS in .env.
   corpus_dir: data/raw
 
 slurm:

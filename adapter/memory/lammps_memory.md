@@ -2,161 +2,137 @@
 
 **Active task:** {{siga_task}}
 
-You are authoring LAMMPS input scripts. This primer is always in your context.
-It covers the command skeleton, the ordering rules LAMMPS actually enforces, and
-the mistakes that most often make a script fail outright **or silently compute
-the wrong physics**.
+LAMMPS reads a script top to bottom and executes each line as it goes, so
+ordering is a correctness property, not a style choice. This primer covers the
+rules you need on most tasks. It is deliberately not a reference: for the
+arguments of any command, call `search_lammps` — never guess a keyword.
 
-It is deliberately short. For the syntax of any single command, call
-`search_lammps` — never guess a keyword or an argument order.
+## Tools
 
-## 1. Command order
+- **`search_lammps(query)`** — authoritative syntax and worked examples. Call it
+  before writing a command you are not certain of, and again when a validation
+  error names something you do not recognise.
+- **`validate_lammps_input(...)`** — deterministic structural checks. Call it
+  **before** you consider the task finished, and fix what it reports.
 
-LAMMPS reads an input script top to bottom and executes each line immediately.
-A command that *declares* something must precede every command that *uses* it.
-Most "errors" are ordering errors.
+## Command order
+
+A command that declares something must precede every command that uses it.
 
 ```
-units           ...        # first: it sets the meaning of every number after it
-atom_style      ...        # before anything that creates or reads atoms
-boundary        ...
-
-# System definition: pick exactly ONE family.
-#   (a) lattice-based
-lattice         ...        # before region
-region          ...        # before create_box
-create_box      ...        # before create_atoms
-create_atoms    ...
-#   (b) file-based
-read_data       ...        # replaces all four of the above
-
-mass            ...        # required unless read_data supplies it
-
-pair_style      ...        # before pair_coeff
-pair_coeff      ...
-
-neighbor        ...
-neigh_modify    ...
-velocity        ...
-compute         ...        # before any fix/thermo that references it
-fix             ...        # before run
-timestep        ...        # before the first run
-thermo          ...
-run             ...
+units          # first — fixes the meaning of every number that follows
+atom_style     # before atoms are created or read
+boundary
+lattice        # before region
+region         # before create_box
+create_box     # before create_atoms
+create_atoms
+read_data      # instead of lattice/region/create_box/create_atoms
+mass           # required unless read_data supplies it
+pair_style     # before pair_coeff
+pair_coeff
+neighbor
+velocity
+compute        # before any fix, thermo_style or dump that names it
+fix            # before run
+timestep       # before the first run
+thermo
+run
 ```
 
-Hard rules, each a real failure mode:
+## Units
 
-- `units` must come before any command carrying a physical quantity.
-- `lattice` → `region` → `create_box` → `create_atoms`, in that order.
-- `read_data` is **exclusive** with `create_box`; using both is an error.
-- `pair_style` before `pair_coeff`; `pair_coeff` before the first `run`.
-- **`timestep` defaults to 0.0.** Omitting it does not merely change the
-  trajectory, it makes the dynamics meaningless.
-- A `compute` must exist before a `fix`, `thermo_style`, or `dump` names it.
-- Define all `fix`es before `run`. A fix added after `run` does not act on the
-  steps already taken.
+A number means nothing without its style, and mixing styles raises no error — it
+silently computes the wrong physics. Decide `units` first and then make every
+number consistent with it.
 
-## 2. units — numbers mean nothing without them
-
-| style | length | energy | time | typical timestep | typical cutoff |
+| units | length | energy | time | timestep | cutoff |
 |---|---|---|---|---|---|
 | `lj` | σ | ε | τ | 0.005 | 2.5 |
-| `metal` | Å | eV | ps | 0.001 (=1 fs) | 5.0 |
+| `metal` | Å | eV | ps | 0.001 | 5.0 |
 | `real` | Å | kcal/mol | fs | 1.0 | 10.0 |
 | `si` | m | J | s | — | — |
 
-A script is only dimensionally coherent if every number matches its `units`.
-Carrying an LJ number into a `metal` script produces a run that completes and
-reports nonsense — the worst kind of failure, because nothing errors.
+In `lj`, mass, σ and ε are all 1 by convention, so `mass 1 1.0` is normal.
 
-In `lj`, mass and σ and ε are all 1 by convention, so `mass 1 1.0` is normal.
-
-## 3. atom_style and the force field
+## atom_style and the force field
 
 `atom_style` fixes which per-atom fields exist and therefore which commands are
-legal: `atomic` (LJ/metals), `charge`, `molecular` (bonds), `full` (bonds +
+legal: `atomic` (LJ and metals), `charge`, `molecular` (bonds), `full` (bonds and
 charge). It must match how atoms are created **and** what a data file contains.
 
-`pair_style` + `pair_coeff` must agree with the atom types actually present.
-`pair_coeff i j ...` sets the i–j interaction; with `pair_style lj/cut 2.5` and
-one type, `pair_coeff 1 1 1.0 1.0 2.5` is complete. Mixed interactions are
-generated by mixing rules unless overridden, so a missing explicit cross term is
-usually not an error — check it, do not assume it.
+`pair_style` and `pair_coeff` must agree with the atom types actually present.
+With one type and `pair_style lj/cut 2.5`, `pair_coeff 1 1 1.0 1.0 2.5` is
+complete. Cross terms are generated by mixing rules unless you set them
+explicitly, so a missing cross term is usually not an error — but check rather
+than assume, because an unintended one will not announce itself.
 
-## 4. Integrators — one per group
+## Integrators
 
-| goal | fix |
-|---|---|
-| energy conservation, no thermostat | `fix ID group nve` |
-| constant T | `fix ID group nvt temp Tstart Tstop Tdamp` |
-| constant T and P | `fix ID group npt temp ... iso Pstart Pstop Pdamp` |
-| NEMD shear (Couette) | `fix ID group nvt/sllod temp ...` with `fix deform` |
+`nve` conserves energy; `nvt` holds temperature; `npt` holds temperature and
+pressure; `nvt/sllod` is for sheared (NEMD) systems.
 
-- **One integrator per group per step.** `fix nve` and `fix nvt` on the same
-  group is an error; `nvt` already integrates.
-- **To change ensemble, `unfix` first**: `unfix 1` then
-  `fix 1 all nvt temp 1.0 1.0 0.5`. Redefining a fix ID without unfixing fails.
-- The damping parameter is in **time units**, so it scales with `timestep`.
-  A robust default is `Tdamp ≈ 100 × timestep`; `Pdamp ≈ 1000 × timestep`.
-- `nvt`/`npt` need a temperature compute. Let LAMMPS create the default unless
-  you have a specific reason (e.g. you must exclude frozen atoms).
+- **One integrator per group.** `nve` and `nvt` on the same group is an error;
+  `nvt` already integrates.
+- **`unfix` before switching ensemble**: `unfix 1`, then `fix 1 all nvt ...`.
+  Redefining a fix ID without unfixing first fails.
+- Damping is in time units, so it scales with `timestep`:
+  `Tdamp ≈ 100 × timestep`, `Pdamp ≈ 1000 × timestep`.
+- `nvt` and `npt` need a temperature compute. Let LAMMPS create the default
+  unless you have a specific reason to supply one.
 
-## 5. compute, thermo, and output
+## compute, thermo and output
 
-- Compute IDs are referenced as `c_ID` or `c_ID[n]` for the n-th scalar.
-- `thermo N` prints every N steps. `thermo_style custom step temp pe ke etotal
-  press` is usually needed; the default style is fixed and will not show a
-  compute you added.
-- Mean-square displacement:
-  `compute ID group msd com yes` then a `fix ave/time`, and read the **total**
-  as `c_ID[4]` (components 1–3 are x, y, z).
-  The `com yes` option subtracts centre-of-mass drift — without it, whole-system
-  translation masquerades as diffusion.
-- `run 0` is a legitimate, cheap way to set up and inspect before committing to
-  a long run.
+A compute you define is **not** printed unless you ask for it. This is one of the
+most common ways a script is structurally fine and still answers nothing:
 
-## 6. The pitfalls that actually bite
+- `thermo N` prints every N steps, but `thermo_style` decides **what** is
+  printed. The default style will not show a compute you added.
+- Use `thermo_style custom step temp pe ke etotal press` and add your own
+  quantities, e.g. `c_msd[4]`.
+- Compute IDs are referenced as `c_ID`, or `c_ID[n]` for the n-th scalar.
+- For a time series, either `fix ave/time` or a `dump` is needed; thermo output
+  alone is sampled at intervals and is not a trajectory.
+- `run 0` is a cheap, legitimate way to set up and inspect before committing to a
+  long run.
 
-1. **LJ lattice density is not a lattice constant.** `lattice fcc 0.8442` takes
-   the reduced *number density* ρ\*, and LAMMPS converts it: a = (4/ρ\*)^(1/3).
-   For ρ\* = 0.8442, a ≈ 1.6796. Writing `lattice fcc 1.6796` silently builds a
-   system at ρ\* ≈ 0.1 — roughly a tenth of the intended density.
-2. **`region` units.** `region box block ...` defaults to lattice units when a
-   lattice is defined. Pass `units box` when you mean raw distance, and be aware
-   the default flips depending on whether `lattice` was already set.
-3. **`timestep` left at 0.0** — the single most common silent failure.
-4. **Missing `mass`** — required for `velocity` and any dynamics unless
-   `read_data` provided it.
-5. **Timestep too large** for the force field → "Lost atoms" / "Bond atoms
-   missing". In `lj`, 0.005 is safe; 0.05 is not.
-6. **Switching integrators without `unfix`** (see §4).
-7. **`fix deform` and a barostat both changing the box.** A deforming box plus
-   `fix npt` that also couples that direction double-counts the strain. Couple
-   the barostat only to the directions you are not deforming.
-8. **`fix deform` needs a periodic dimension** to deform, or `remap` handling.
-9. **Diffusion measured in a solid.** MSD in a frozen lattice plateaus; a
-   diffusion benchmark must actually be in a diffusive regime, which usually
-   means running above the melting temperature and discarding the equilibration
-   portion.
-10. **Equilibrating too briefly.** A thermostat needs several damping times to
-    reach the target. Running 100 steps with `Tdamp` = 0.5 and reporting the
-    temperature is not equilibration.
+## Frequent fatal mistakes
 
-## 7. Task patterns
+1. **`timestep` defaults to 0.0.** Omitting it does not merely change the
+   trajectory — it makes the dynamics meaningless.
+2. **`lattice fcc 0.8442` takes a reduced number density ρ\*, not a lattice
+   constant.** LAMMPS converts it: a = (4/ρ\*)^(1/3) ≈ 1.6796 here. Writing the
+   lattice constant instead builds a system roughly ten times too dilute, and
+   nothing raises an error.
+3. **Missing `mass`** — required by `velocity` and by any dynamics, unless
+   `read_data` supplied it.
+4. **Timestep too large** for the force field, giving lost atoms or a bond
+   failure. In `lj`, 0.005 is safe and 0.05 is not; in `metal`, 0.001 is the
+   usual choice.
+5. **`region` follows lattice units by default** once a lattice exists. Pass
+   `units box` when you mean a raw distance, and be aware the default flips
+   depending on whether `lattice` was already set.
+6. **`fix deform` together with a barostat on the same axis** double-counts the
+   strain. Couple the barostat only to the axes you are not deforming. A
+   deforming direction must also be periodic, or it needs explicit `remap`
+   handling.
+7. **Measuring diffusion in a solid.** Mean-square displacement in a frozen
+   lattice plateaus rather than growing. Diffusion needs a genuinely diffusive
+   regime, and `compute msd` needs `com yes` so that whole-system drift is not
+   mistaken for diffusion.
+8. **Equilibrating too briefly.** A thermostat needs several damping times to
+   reach its target. Running a handful of steps with a long `Tdamp` and then
+   reporting the temperature is not equilibration.
+9. **Switching integrators, or redefining any fix ID, without `unfix`.**
+10. **Frozen atoms still thermostatted.** If a group must stay fixed, exclude it
+    from the temperature compute rather than thermostatting it and hoping.
 
-- **Melting** — fcc lattice at the intended ρ\*, heat above the melting point
-  (in LJ, T ≈ 0.7–1.0), NVT or NVE, long enough to see the transition. Get
-  pitfall 1 right or the "crystal" is a gas.
-- **NVT equilibration** — `fix nvt`, `Tdamp ≈ 100 × timestep`, at least ~10⁴
-  steps, and verify the reported temperature converges to the target rather than
-  oscillating around it.
-- **MSD diffusion** — see §5. Use `com yes`, a diffusive regime, and read
-  `c_ID[4]`.
-- **Uniaxial tension** — `fix deform` with an `erate` along one axis, and a
-  barostat coupled only to the lateral axes (pitfall 7). Confirm the strain rate
-  and the timestep are consistent: too fast and the system is shocked, not
-  strained.
-- **Nanoindentation** — `fix indent` with a spherical indenter acting on a
-  defined group; thermalize the substrate first, and expect the indenter to be
-  modelled as a rigid or repulsive body rather than a normal atom group.
+## Before you finish
+
+- [ ] `units` and `atom_style` set, and consistent with the force field used
+- [ ] every referenced file (data, potential, restart) exists in the workspace
+- [ ] `timestep` set, and the `run` length matches the requested duration
+- [ ] the ensemble matches what was actually asked for
+- [ ] every requested observable is computed **and** written to output
+- [ ] the simulation does what the task asked, not merely something that runs
+- [ ] `validate_lammps_input` reports no errors
