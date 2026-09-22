@@ -301,19 +301,47 @@ Two consequences, one enabling and one requiring care:
   without adding real authentication would hand out that capability, and the
   harness has already told us it will not stop us.
 
-### Transport: the event stream is SSE, not WebSocket
+### Transport: the event stream is WebSocket, not SSE
 
-An earlier note in this project recorded these as WebSocket downlinks. That is
-wrong. `packages/host/apiproxy/src/fetch/handler.ts:252-258` comments the routes
-as *"No-envelope read channels (SSE GET streams + host-only download)"* and
-answers them with `sseResponse(...)`, which emits
-`content-type: text/event-stream` with `data: <json>\n\n` framing
-(`handler.ts:205-235`). `registerUpgrade` — the WebSocket path — appears only in
-a webserver invariant probe, never for events.
+**This section previously claimed the opposite. Recording the correction because
+the mistake is instructive:** I read `packages/host/apiproxy/src/fetch/handler.ts`
+in isolation — it genuinely does answer these paths with `sseResponse(...)` and
+`content-type: text/event-stream` — without checking *which carrier mounts it for
+a browser*. Reading a file is not the same as reading the wiring.
 
-Practical effect: Area B is consumed with a plain streaming HTTP GET
-(`httpx` in Python), not a WebSocket client. The stream opens with a
-`: connected` comment line so an idle channel is visibly alive.
+There are **two carriers**, and only one is reachable over the network:
+
+| Carrier | Used by | Event transport |
+|---|---|---|
+| `toFetchHandler` + `InProcessApiClient` | in-process clients | SSE — never touches the network |
+| `WebSocketDownlinks` via HTTP upgrade | the browser | **WebSocket** |
+
+The decisive code is `packages/client/connection/src/index.ts:150-155`, which
+intercepts a plain GET **before** it can reach the fetch handler:
+
+```ts
+if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
+  return new Response('upgrade required', {
+    status: 426,
+    headers: { connection: 'Upgrade', upgrade: 'websocket' },
+  })
+}
+```
+
+The upgrade routes are registered at `:193-194`, and `api-path.ts:11,14` names
+them outright: *"Browser mux-frame **WebSocket** pathname"*. Frames arrive as
+JSON `{ type: 'server-request', rpcId, method, payload }`
+(`websocket-downlink.ts:16-24`).
+
+**Practical effect — the split is per route, not per server:**
+
+- `POST /api/<method>` RPC — plain HTTP, `application/json` (else 415). Unchanged,
+  and `session.create`/`session.prompt` work exactly as this document assumes.
+- `GET /api/events.mux` — **WebSocket upgrade only**; a plain GET returns 426.
+
+So Area B needs a WebSocket client (`websockets` in Python), not an `httpx`
+streaming GET. Building it the other way would have produced a 426 that reads
+like an auth or routing failure rather than a protocol mismatch.
 
 **Area B shows tool calls, statuses, short action summaries, and validator
 feedback — never hidden chain-of-thought.** We forward only what the session log
@@ -349,6 +377,11 @@ rather than merely confirming them.
 | Out-of-tree client UI | The `clientBundle()` tsdown preset is **not published**; a bundle-purity gate rejects cross-plugin value imports | **Validates Option B.** Building the three Areas as in-GUI client plugins would fight unpublished packaging |
 | Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | **Validates Option B.** Area C's job card needs our own UI; the harness can only render `generic`/`terminal`/`diff`/`search`/`read`/`web` |
 | Host HTTP routes | `ctx.webServer.register({ kind: 'exact'\|'prefix', path, handler })` (`webserver/src/index.ts:59`) is the sanctioned out-of-tree route | Available if a host-half route is ever needed; our FastAPI app is independent of it |
+| S firing boundary | The gate runs only at the **natural stop boundary**: `agent-loop/src/agent.ts:294-299` gates on `turnEnds`, and a step that emitted tool calls leaves `turnEnds === null`, skipping it | Correct semantics for a Stop hook — S judges a *finished* attempt, not a mid-loop state. S never sees a half-written script. |
+| S loop guard | `hooks-claude-code` hard-codes `stop_hook_active: false` and its README records `TODO(stop-loop-guard)`; `core/agent-loop/README.md:134` states *"No built-in turn budget"* | Confirms S **must** self-limit. Our `MAX_BLOCKS` budget is not defensive padding; without it an ungated validator loops forever. |
+| Plugin-owned state | `ctx.storageDomain` + `defineDomain` give a plugin a KV domain, independent of the session log | The durable option for S's block counter if it ever needs to survive a restart. v1 keeps it in memory — per-turn state does not outlive a turn. |
+| Benchmark driver | TS SDK is full-featured: `DeepSeekHarness.run()` with `onNotification` (`packages/sdk/client/src/api.ts:22`, `:98`). The **Python SDK is sessions-only** — no subagent or plugin API | Decides D2's benchmark path: drive headless via the harness CLI, or the TS SDK. Not the Python SDK. |
+| Headless CLI flags | `dsh --profile headless "task"` prints the final assistant text and exits 0/1. There is **no `--json` / `--print` flag** | Benchmark metrics come from the **session log**, not from CLI stdout. That is already how the evaluator is designed. |
 
 ## Build order (each step tested before the next)
 
