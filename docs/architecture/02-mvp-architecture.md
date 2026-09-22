@@ -182,14 +182,34 @@ ctx.on('agent/turn-stopping', async ({ agent, turn }) => {
 1. **There is no continuation cap on `agent/turn-stopping`.** A validator that
    never passes would loop the agent indefinitely, burning tokens. S therefore
    keeps a per-`(session, turn)` block counter, caps it at `MAX_BLOCKS`
-   (configurable, default 3), and on exhaustion **allows the turn to close** while
-   recording a structured `siga/stop-gate-exhausted` fact. This is both a cost
-   guard and a benchmark signal — "how often did S fail to converge" is a real
-   result, not a hidden failure.
-2. **Custom durable events must be `ignorable: true`** or the harness refuses to
-   reload any session we touched (`session-persistence/coordinator.ts:1061`).
+   (configurable, default 3), and on exhaustion **allows the turn to close**.
+   This is both a cost guard and a benchmark signal — "how often did S fail to
+   converge" is a real result, not a hidden failure.
+2. **The counter must live in plugin-owned memory, not the session log.** A
+   `siga/stop-gate-exhausted` event would be the natural way to record it, and it
+   is exactly what we may not do: an out-of-repo event type makes the session
+   unresumable (audit G3). This costs us nothing — the counter is per-turn state,
+   and turns do not survive a restart by definition. The *count* is reported to
+   the benchmark layer, which owns its own storage.
 
 S inspects **only** structural validity. It never looks at whether LAMMPS ran.
+
+### How state is carried, given we may not add event types
+
+This constraint touches S, Area B, and the benchmark, so it is stated once here.
+
+| What we need | How it is carried | Event type it lands as |
+|---|---|---|
+| Repair instruction to the agent | `agent.steer(...)` | `user/message` |
+| Durable plugin context | `agent.inject({ content, source: { kind: 'plugin', plugin: 'siga' } })` | `user/message` |
+| Validator results | the `validate_lammps_input` tool's own return value | `tool/call` + `tool/result` |
+| S block count within a turn | plugin-owned in-memory state | none (never durable) |
+| S block counts across runs | the benchmark layer's own store | none (outside the harness) |
+
+The third row is the pleasant consequence: **the validator's output is already
+durable as a tool call**, so a custom `siga/validation` event would have been
+redundant even if it were permitted. The agent's own validation history is
+recoverable from the log without us inventing anything.
 
 ### HPC execution
 
@@ -204,9 +224,13 @@ Tools (all over MCP, no `hpc_run_shell`): `hpc_upload_workspace`,
   less, never more.
 - Every submission is appended to an audit log with the exact rendered script.
 - `preflight.py` distinguishes **auth failure** from other failures. This is not
-  hypothetical: the `sy_hl_login` certificate expired 2026-09-17, so a clear
-  "certificate expired, renew it" message is the difference between a usable
-  system and a mysterious hang.
+  hypothetical: certificates on this cluster are short-lived (the current one
+  runs 2026-09-22 → 2026-10-22), so expiry is a routine monthly event rather than
+  an exceptional fault. A clear "certificate expired, renew it" message is the
+  difference between a usable system and a mysterious failure.
+- **Every operation goes through `sy_hl_login`.** It is the only alias this
+  certificate authenticates as, and it is the only submission target. The HPC
+  layer hard-codes nothing else and adds no fallback host.
 
 ### Benchmark
 
@@ -242,8 +266,11 @@ FastAPI backend that is a **thin, honest proxy** plus run management:
 
 **Area B shows tool calls, statuses, short action summaries, and validator
 feedback — never hidden chain-of-thought.** We forward only what the session log
-already makes durable: `tool/call`, `tool/result`, `agent/status`, and our own
-`siga/validation` and `siga/stop-gate` facts. Nothing is synthesized.
+already makes durable: `tool/call`, `tool/result`, `agent/status`, and
+`user/message`. Nothing is synthesized, and nothing new is invented — validator
+feedback reaches the UI through the `validate_lammps_input` tool call that
+produced it, and through the `user/message` that S steers back to the agent when
+it blocks a turn. Both are events the harness already writes.
 
 ## Implementation constraints confirmed against source
 
@@ -262,7 +289,7 @@ harness checkout, and the first two correct assumptions I had made.
 | Approval | `ctx.approval.request({agent, toolName, callId?, reason?, signal?})`; policy `ask` \| `never`; fails **closed** to deny without an answerer | The right gate for HPC submission — a human click, not a silent upload |
 | Tool visibility | `ctx.tools.restrict({ allow?, deny? })` — scoped contexts only, throws on a global one | Keeps HPC tools out of presets that should not have them |
 | Whole-prompt transform | `system-prompt/assemble` waterfall exists | Not needed for M; `section()` is sufficient and less invasive |
-| Durable events | 18 packages already extend `SessionEventMap` by declaration merging | Our `siga/*` events are a supported pattern — with `ignorable: true` (audit G3) |
+| Durable events | 18 *in-repo* packages extend `SessionEventMap` by declaration merging — but `known-event-types.ts:15-17` excludes out-of-repo plugins **by construction**, and `Session.append` offers no `ignorable` escape hatch | **We may not invent a `siga/*` event type.** All durable and model-visible state rides known types — see below |
 
 ## Build order (each step tested before the next)
 

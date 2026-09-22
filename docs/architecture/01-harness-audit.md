@@ -137,7 +137,7 @@ Remarkably little. The gaps are packaging and plumbing, not capability.
 |---|---|---|---|
 | G1 | **No LAMMPS domain content** — no primer, no corpus, no rules | Expected | This *is* the project. Not a harness gap. |
 | G2 | **No SSH/SFTP remote-execution seam** | Medium | Nothing in the repo does SSH. The capability graph (`docs/architecture.md`) says to add a `ctx.fs` provider to move filesystem access remotely — powerful but a large build. A narrow, audited tool set is safer. |
-| G3 | **Custom session events break resume by default** | **High (trap)** | `session-persistence/src/coordinator.ts:1061` refuses to interpret a log containing an event type absent from `KNOWN_SESSION_EVENT_TYPES` **unless `event.ignorable === true`**. Our own durable events must be marked ignorable, or sessions become unresumable. |
+| G3 | **An out-of-repo plugin must never append a novel session event type** | **High (trap)** | `known-event-types.ts:15-17` states it outright: *"Downstream (out-of-repo) plugin events are outside this list by construction; a registration surface for them is deferred until such a consumer exists."* See the note below — there is **no** escape hatch. |
 | G4 | **No prompt token budget** | Medium | `packages/llm/token-meter/src/estimate.ts:13` uses `CHARS_PER_TOKEN = 4`; compaction replays `header.system` verbatim, and there is no per-plugin prompt cap. An oversized M is billed on **every** request. M must be deliberately small and measured. |
 | G5 | **No out-of-tree plugin template** | Low | Plugin authoring is documented (`docs/user/develop/basic/`) but there is no scaffolded starter. We write ours. |
 | G6 | **No benchmark/evaluation harness for adapter ablations** | Low | The Python SDK runs tasks headlessly; the task matrix, metrics, and evaluator are ours to build. |
@@ -270,8 +270,28 @@ separate as required by §5.
 
 ### Two things I verified that will bite us if ignored
 
-1. **`G3`** — our durable session events must set `ignorable: true`, or the
-   harness refuses to reload any session we touched (`coordinator.ts:1061`).
+1. **`G3` — a third-party plugin cannot add a durable session event type.**
+   An earlier draft of this document said our `siga/*` events merely needed
+   `ignorable: true`. **That was wrong, and wrong in the actionable direction.**
+   Verified against source:
+
+   - `Session.append<T>(type, data, ...opts)` accepts only `SurfaceIntent`,
+     which carries `surfaceOp` / `sourceEventSeqs` — **no `ignorable`**
+     (`core/session/src/index.ts:604`, `core/session/src/types.ts:380-389`).
+   - `ignorable` exists solely on the **read** envelope
+     (`core/session/src/types.ts:422`), as the guard for logs written by a
+     *newer harness*. It is not a writer-side marker.
+
+   So appending `session.append('siga/whatever', {...})` appears to succeed in
+   the live process, and then **resuming that session throws**
+   `SessionFormatUnsupportedError` — the harness refuses to read its own log
+   (`session-persistence/src/coordinator.ts:1063-1064`).
+
+   The consequence for the design is a constraint, not a workaround: any durable
+   or model-visible state must ride **already-known event types** — `agent.steer()`
+   and `agent.inject()` both produce `user/message`, and tool output is already
+   durable as `tool/call` / `tool/result`. See audit §5 for how this reshaped the
+   S design and Area B.
 2. **`G4`** — M's prompt text is billed on every request and is never trimmed.
    M must stay compact and be measured, not assumed cheap.
 
@@ -296,10 +316,13 @@ encode:
   `/scratch/home/acct-Linlin00/fjr200630-1`, but `/scratch` exists on neither the
   login node nor a compute node. The workspace root is therefore `$HOME` on
   `/dssg`.
-- **`debug` is not submittable from this login node.** `sbatch` demands
-  submission from `pilogin.hpc.sjtu.edu.cn`, whose `~/.ssh/config` entry resolves
-  to a different user this certificate cannot authenticate as. `64c512g` starts
-  immediately and is the configured partition.
+- **`debug` is not submittable, and `pilogin` is never used.** `sbatch` from
+  `sy_hl_login` answers *"Please submit job from pilogin.hpc.sjtu.edu.cn when
+  using debug partition"*, and that host's `~/.ssh/config` entry resolves to a
+  different user this certificate cannot authenticate as. `64c512g` starts
+  immediately and is the configured partition. This was observed once as a
+  diagnostic and is recorded only so nobody retries it — **all SSH, SFTP and
+  `sbatch` traffic goes through `sy_hl_login`, with no fallback host.**
 
 Certificates on this cluster expire after roughly a month, so `hpc/preflight.py`
 must still distinguish *auth failure* from other failures and name the renewal as
