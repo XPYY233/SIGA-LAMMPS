@@ -1,120 +1,242 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SIGA-LAMMPS</title>
+<title>SIGA-LAMMPS · 模拟任务控制台</title>
 <style>
-  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --fg:#e6e8ec; --dim:#8b93a3;
-          --ok:#3fb950; --warn:#d29922; --err:#f85149; --accent:#5b9dff; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex;
-           align-items:center; gap:14px; }
-  header h1 { font-size:15px; margin:0; font-weight:600; }
-  header .status { font-size:12px; color:var(--dim); margin-left:auto; }
-  .dot { display:inline-block; width:7px; height:7px; border-radius:50%;
-         background:var(--dim); margin-right:6px; vertical-align:middle; }
-  .dot.ok { background:var(--ok); } .dot.bad { background:var(--err); }
-  main { display:grid; grid-template-columns:1.05fr 1.25fr 1.1fr; gap:1px;
-         background:var(--line); min-height:calc(100vh - 53px); }
-  section { background:var(--bg); padding:16px 18px; display:flex; flex-direction:column;
-            min-width:0; }
-  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim);
-       margin:0 0 10px; font-weight:600; }
-  textarea,input,select,button { font:inherit; color:var(--fg); background:var(--panel);
-       border:1px solid var(--line); border-radius:6px; padding:8px 10px; width:100%; }
-  textarea { min-height:110px; resize:vertical; }
-  button { background:var(--accent); border-color:var(--accent); color:#06101f;
-           font-weight:600; cursor:pointer; width:auto; padding:8px 16px; }
-  button.ghost { background:transparent; color:var(--fg); border-color:var(--line);
-                 font-weight:500; }
-  button:disabled { opacity:.45; cursor:not-allowed; }
-  .row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
-  label.field { display:block; margin:11px 0 4px; font-size:12px; color:var(--dim); }
-  pre { background:var(--panel); border:1px solid var(--line); border-radius:6px;
-        padding:10px; overflow:auto; font-size:12px; margin:0;
-        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-  #activity { flex:1 1 auto; overflow:auto; display:flex; flex-direction:column;
-              gap:5px; min-height:280px; max-height:62vh; }
-  .ev { border-left:2px solid var(--line); padding:3px 0 3px 10px; font-size:12.5px; }
-  .ev.tool { border-color:var(--accent); } .ev.err { border-color:var(--err); }
-  .ev.gate { border-color:var(--warn); }
-  .ev .k { color:var(--dim); font-size:11px; }
-  .muted { color:var(--dim); font-size:12px; }
-  .files { max-height:170px; overflow:auto; font-size:12px; margin-top:6px; }
-  .files div { padding:2px 0; cursor:pointer; }
-  .files div:hover { color:var(--accent); }
-  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
-          border:1px solid var(--line); color:var(--dim); }
-  .pill.ok { color:var(--ok); border-color:var(--ok); }
-  .pill.err { color:var(--err); border-color:var(--err); }
-  .pill.warn { color:var(--warn); border-color:var(--warn); }
+  /* GitHub 暗色主题取值 */
+  /* GitHub 暗色（默认） */
+  :root{
+    --canvas:#0d1117; --surface:#161b22; --surface2:#21262d;
+    --border:#30363d; --border-muted:#21262d;
+    --fg:#e6edf3; --fg-muted:#7d8590; --fg-subtle:#6e7681;
+    --accent:#2f81f7; --accent-emphasis:#1f6feb;
+    --success:#3fb950; --attention:#d29922; --danger:#f85149; --done:#a371f7;
+    --hover:#30363d; --hover-border:#8b949e;
+    --on-accent:#04260f; --focus-ring:rgba(31,111,235,.3);
+    --tint-success:rgba(63,185,80,.12); --tint-danger:rgba(248,81,73,.09);
+    --tint-gate:rgba(210,153,34,.08); --tint-border:rgba(240,246,252,.1);
+    color-scheme:dark;
+  }
+  /* GitHub 浅色 */
+  :root[data-theme="light"]{
+    --canvas:#ffffff; --surface:#f6f8fa; --surface2:#eaeef2;
+    --border:#d0d7de; --border-muted:#d8dee4;
+    --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
+    --accent:#0969da; --accent-emphasis:#0969da;
+    --success:#1a7f37; --attention:#9a6700; --danger:#cf222e; --done:#8250df;
+    --hover:#eaeef2; --hover-border:#afb8c1;
+    --on-accent:#ffffff; --focus-ring:rgba(9,105,218,.3);
+    --tint-success:rgba(26,127,55,.10); --tint-danger:rgba(207,34,46,.07);
+    --tint-gate:rgba(154,103,0,.08); --tint-border:rgba(27,31,36,.15);
+    color-scheme:light;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--canvas); color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,
+         "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,
+         "Liberation Mono",monospace}
+  header{
+    display:flex; align-items:center; gap:12px;
+    padding:12px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border);
+  }
+  header h1{font-size:15px; font-weight:600; margin:0}
+  .badge{font-size:11px; color:var(--fg-muted); border:1px solid var(--border);
+         border-radius:999px; padding:1px 9px}
+  .health{margin-left:auto; display:flex; align-items:center; gap:7px;
+          font-size:12px; color:var(--fg-muted)}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--fg-subtle); flex:0 0 auto}
+  .dot.ok{background:var(--success); box-shadow:0 0 0 3px var(--tint-success)}
+  .dot.bad{background:var(--danger); box-shadow:0 0 0 3px var(--tint-danger)}
+  main{display:grid; grid-template-columns:minmax(300px,1fr) minmax(360px,1.3fr) minmax(320px,1.1fr);
+       gap:1px; background:var(--border); min-height:calc(100vh - 49px)}
+  section{background:var(--canvas); padding:16px 18px; display:flex; flex-direction:column;
+          min-width:0; min-height:0}
+  h2{font-size:12px; font-weight:600; letter-spacing:.6px; color:var(--fg-muted);
+     margin:0 0 10px; text-transform:uppercase}
+  h2 .zh{color:var(--fg); text-transform:none; letter-spacing:0; font-size:13px; margin-left:7px}
+  textarea,input[type=file],select,button{
+    font:inherit; color:var(--fg); background:var(--surface);
+    border:1px solid var(--border); border-radius:6px; padding:7px 10px; width:100%;
+  }
+  textarea{min-height:104px; resize:vertical; line-height:1.55}
+  textarea:focus,select:focus{outline:none; border-color:var(--accent-emphasis);
+    box-shadow:0 0 0 3px var(--focus-ring)}
+  button{width:auto; cursor:pointer; font-weight:500; padding:6px 14px;
+    background:var(--surface2); border-color:var(--border); color:var(--fg);
+    transition:background .12s,border-color .12s}
+  button:hover:not(:disabled){background:var(--hover); border-color:var(--hover-border)}
+  button.primary{background:var(--success); border-color:var(--tint-border);
+    color:var(--on-accent); font-weight:600}
+  button.primary:hover:not(:disabled){filter:brightness(1.08)}
+  button.danger{color:var(--danger)}
+  button.ghost{font-size:12px; padding:3px 10px}
+  button.danger:hover:not(:disabled){background:var(--danger); color:#fff; border-color:var(--danger)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  .row{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
+  .field{margin-top:12px}
+  .field > label{display:block; font-size:12px; color:var(--fg-muted); margin-bottom:5px}
+  .hint{font-size:12px; color:var(--fg-subtle); margin-top:6px; line-height:1.5}
+  pre{background:var(--surface); border:1px solid var(--border); border-radius:6px;
+      padding:10px 12px; margin:0; overflow:auto; font-size:12px; line-height:1.55}
+  #activity{flex:1 1 auto; overflow:auto; min-height:240px; max-height:64vh;
+            border:1px solid var(--border); border-radius:6px; background:var(--surface); padding:8px}
+  .ev{border-left:3px solid var(--border); padding:5px 0 5px 10px; margin-bottom:3px;
+      font-size:12.5px; border-radius:0 4px 4px 0}
+  .ev:hover{background:var(--surface2)}
+  .ev .meta{font-size:11px; color:var(--fg-subtle); display:flex; gap:8px; align-items:center}
+  .ev .body{margin-top:2px; word-break:break-word; white-space:pre-wrap}
+  .ev.tool{border-left-color:var(--accent)}
+  .ev.ok{border-left-color:var(--success)}
+  .ev.err{border-left-color:var(--danger)}
+  .ev.gate{border-left-color:var(--attention); background:var(--tint-gate)}
+  .ev.sys{border-left-color:var(--done)}
+  .tag{font-size:10.5px; border:1px solid var(--border); border-radius:999px;
+       padding:0 7px; color:var(--fg-muted)}
+  .tag.tool{color:var(--accent); border-color:rgba(47,129,247,.4)}
+  .tag.gate{color:var(--attention); border-color:rgba(210,153,34,.4)}
+  .tag.err{color:var(--danger); border-color:rgba(248,81,73,.4)}
+  .tag.ok{color:var(--success); border-color:rgba(63,185,80,.4)}
+  .empty{color:var(--fg-subtle); font-size:12.5px; padding:14px 4px; text-align:center}
+  .status-line{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+               font-size:12.5px; color:var(--fg-muted)}
+  .pill{font-size:11.5px; border-radius:999px; padding:1px 9px;
+        border:1px solid var(--border); color:var(--fg-muted); white-space:nowrap}
+  .pill.completed{color:var(--success); border-color:rgba(63,185,80,.5); background:var(--tint-success)}
+  .pill.failed{color:var(--danger); border-color:rgba(248,81,73,.5); background:var(--tint-danger)}
+  .pill.running,.pill.pending{color:var(--attention); border-color:rgba(210,153,34,.5);
+        background:var(--tint-gate)}
+  .files{margin-top:6px; max-height:170px; overflow:auto; border:1px solid var(--border);
+         border-radius:6px; background:var(--surface)}
+  .files .f{padding:5px 10px; font-size:12px; cursor:pointer; display:flex;
+            justify-content:space-between; gap:10px; border-bottom:1px solid var(--border-muted)}
+  .files .f:last-child{border-bottom:none}
+  .files .f:hover{background:var(--surface2); color:var(--accent)}
+  .files .f .sz{color:var(--fg-subtle); font-size:11px}
+  .sub{margin-top:16px}
+  .alert{border:1px solid var(--border); border-left:3px solid var(--danger);
+         border-radius:6px; padding:8px 10px; font-size:12.5px;
+         background:var(--tint-danger); margin-top:10px; line-height:1.6}
 </style>
 </head>
 <body>
 <header>
   <h1>SIGA-LAMMPS</h1>
-  <span class="pill">M &middot; R &middot; X &middot; S</span>
-  <span class="status"><span id="hdot" class="dot"></span><span id="htxt">checking harness&hellip;</span></span>
+  <span class="badge">M · R · X · S</span>
+  <button id="theme" class="ghost" title="切换浅色 / 深色">🌙 深色</button>
+  <span class="health"><span id="hdot" class="dot"></span><span id="htxt">正在检测 harness…</span></span>
 </header>
+
 <main>
   <section>
-    <h2>A &middot; Simulation Request</h2>
-    <textarea id="request" placeholder="Describe the LAMMPS simulation you want, e.g. Simulate the melting of a 3D Lennard-Jones crystal at reduced density 0.8442 and temperature 1.2"></textarea>
-    <label class="field" for="task">Benchmark task (optional &mdash; freezes the specification)</label>
-    <select id="task">
-      <option value="">none &mdash; use my wording</option>
-      <option value="lj_melt">lj_melt &middot; Lennard-Jones melting</option>
-      <option value="nvt_equilibration">nvt_equilibration &middot; NVT equilibration</option>
-      <option value="msd_diffusion">msd_diffusion &middot; MSD diffusion</option>
-      <option value="uniaxial_tension">uniaxial_tension &middot; uniaxial tension</option>
-      <option value="nanoindentation">nanoindentation &middot; nanoindentation</option>
-    </select>
-    <label class="field" for="config">Adapter configuration</label>
-    <select id="config">
-      <option value="vanilla">vanilla &mdash; no adapter</option>
-      <option value="m">M &mdash; procedural memory</option>
-      <option value="mr">M+R &mdash; memory and retrieval</option>
-      <option value="mrsx" selected>M+R+X+S &mdash; full adapter</option>
-    </select>
-    <label class="field" for="files">Attach structure / data / potential files</label>
-    <input id="files" type="file" multiple>
-    <div class="row">
-      <button id="generate">Generate simulation</button>
-      <button id="followup" class="ghost" disabled>Send follow-up</button>
+    <h2>A<span class="zh">模拟需求</span></h2>
+    <textarea id="request" placeholder="用自然语言描述你想要的 LAMMPS 模拟。例如：把三维 Lennard-Jones 晶体从 FCC 点阵熔化，约化密度 0.8442，温度 1.2，时间步长 0.005。"></textarea>
+    <div id="reqwarn" class="alert" style="display:none">
+      请填写需求描述，或选择一个 benchmark 任务。生成前必须有一个明确的任务。
     </div>
-    <div class="row"><span id="runinfo" class="muted">no run yet</span></div>
-  </section>
-  <section>
-    <h2>B &middot; Agent Activity</h2>
-    <div class="muted">Tool calls, statuses and validator feedback. Reasoning is not shown.</div>
-    <div id="activity"></div>
-  </section>
-  <section>
-    <h2>C &middot; Simulation Job</h2>
-    <div id="jobbox" class="muted">not submitted</div>
-    <div class="row">
-      <button id="submit" class="ghost" disabled>Validate &amp; submit to HPC</button>
-      <button id="cancel" class="ghost" disabled>Cancel</button>
+    <div class="field">
+      <label for="task">Benchmark 任务（可选 —— 选中后使用冻结的标准规格）</label>
+      <select id="task">
+        <option value="">不使用 —— 用我自己的描述</option>
+        <option value="lj_melt">lj_melt · Lennard-Jones 熔化</option>
+        <option value="nvt_equilibration">nvt_equilibration · NVT 平衡</option>
+        <option value="msd_diffusion">msd_diffusion · 均方位移扩散</option>
+        <option value="uniaxial_tension">uniaxial_tension · 单轴拉伸</option>
+        <option value="nanoindentation">nanoindentation · 纳米压痕</option>
+      </select>
     </div>
-    <h2 style="margin-top:16px">Generated files</h2>
-    <div id="files-list" class="files muted">none</div>
-    <h2 style="margin-top:16px">File contents</h2>
-    <pre id="file-view" style="max-height:200px">select a file</pre>
-    <h2 style="margin-top:16px">log.lammps</h2>
-    <pre id="log-view" style="max-height:190px">&mdash;</pre>
+    <div class="field">
+      <label for="config">Adapter 配置</label>
+      <select id="config">
+        <option value="vanilla">vanilla —— 无 adapter</option>
+        <option value="m">M —— 程序性记忆</option>
+        <option value="mr">M+R —— 记忆与检索</option>
+        <option value="mrsx" selected>M+R+X+S —— 完整 adapter</option>
+      </select>
+      <div class="hint">生效配置由启动 harness 时挂载的 overlay 决定；切换需重启 harness。</div>
+    </div>
+    <div class="field">
+      <label for="files">附加结构 / 数据 / 势函数文件</label>
+      <input id="files" type="file" multiple>
+    </div>
+    <div class="row">
+      <button id="generate" class="primary">生成模拟</button>
+      <button id="followup" disabled>追加修改要求</button>
+    </div>
+    <div class="row"><span id="runinfo" class="hint">尚未创建任务</span></div>
+  </section>
+
+  <section>
+    <h2>B<span class="zh">Agent 活动</span></h2>
+    <div class="hint" style="margin-bottom:8px">展示工具调用、状态变化与验证反馈，不展示隐藏推理过程。</div>
+    <div id="activity"><div class="empty">等待任务开始…</div></div>
+  </section>
+
+  <section>
+    <h2>C<span class="zh">模拟作业</span></h2>
+    <div id="jobbox" class="status-line"><span class="pill">未提交</span></div>
+    <div class="row">
+      <button id="submit" disabled>校验并提交到超算</button>
+      <button id="cancel" class="danger" disabled>取消</button>
+    </div>
+    <div id="jobalert"></div>
+    <div class="sub"><h2>生成的文件</h2>
+      <div id="files-list" class="files"><div class="f"><span class="empty" style="padding:0">暂无</span></div></div>
+    </div>
+    <div class="sub"><h2>文件内容</h2>
+      <pre id="file-view" style="max-height:190px">点击左侧文件查看内容</pre>
+    </div>
+    <div class="sub"><h2>log.lammps</h2>
+      <pre id="log-view" style="max-height:180px">—</pre>
+    </div>
   </section>
 </main>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let currentRun = null, stream = null, poll = null;
-const esc = (s) => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const esc = (s) => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const bytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
 
-function setHarness(ok, text) {
-  $("hdot").className = "dot " + (ok ? "ok" : "bad");
-  $("htxt").textContent = text;
+function label(ev) {
+  const d = ev.data || {};
+  switch (ev.type) {
+    case "tool/call":   return { cls:"tool", tag:"工具", text:"调用 " + (d.name || "?") + "()" };
+    case "tool/result": return { cls: d.is_error ? "err" : "ok",
+                                 tag: d.is_error ? "工具错误" : "工具返回",
+                                 text: (d.preview || "").slice(0,300) || "(无输出)" };
+    case "agent/status":return { cls:"sys", tag:"状态", text: d.status === "running" ? "运行中" : "空闲" };
+    case "user/message": {
+      if (d.source === "@deepseek-ai/dsh-system-prompt")
+        return { cls:"sys", tag:"环境", text:(d.preview || "").slice(0,200) };
+      const gate = d.source && d.source !== "user";
+      return gate
+        ? { cls:"gate", tag:"停止门控 S", text:"S 拦截了本轮结束，要求 agent 返工：\n" + (d.preview || "").slice(0,400) }
+        : { cls:"", tag:"科研人员", text:(d.preview || "").slice(0,400) };
+    }
+    case "step/start":  return { cls:"sys", tag:"步骤", text:"开始第 " + (d.step ?? "?") + " 步" };
+    case "step/end":    return { cls:"sys", tag:"步骤", text:"第 " + (d.step ?? "?") + " 步结束" };
+    case "turn/start":  return { cls:"sys", tag:"轮次", text:"开始第 " + (d.turn ?? "?") + " 轮" };
+    case "turn/end":    return { cls:"sys", tag:"轮次", text:"第 " + (d.turn ?? "?") + " 轮结束" };
+    case "stream/error":return { cls:"err", tag:"错误", text: d.detail || "事件流异常" };
+    default:            return { cls:"sys", tag:ev.type, text: JSON.stringify(d).slice(0,160) };
+  }
+}
+function addEvent(ev) {
+  const box = $("activity");
+  const ph = box.querySelector(".empty"); if (ph) ph.remove();
+  const L = label(ev);
+  const el = document.createElement("div");
+  el.className = "ev " + L.cls;
+  el.innerHTML = '<div class="meta"><span class="tag ' + L.cls + '">' + esc(L.tag) +
+                 '</span><span>' + esc(ev.seq != null ? "#" + ev.seq : "") + '</span></div>' +
+                 '<div class="body">' + esc(L.text) + '</div>';
+  box.appendChild(el); box.scrollTop = box.scrollHeight;
 }
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -127,29 +249,9 @@ async function probe() {
   try {
     const h = await api("/healthz");
     const ok = h.harness === "ok";
-    setHarness(ok, ok ? "harness ready \u00b7 " + h.harness_url : h.harness);
-  } catch (e) { setHarness(false, "backend unreachable"); }
-}
-function addEvent(ev) {
-  const d = ev.data || {};
-  let cls = "ev", label = ev.type, detail = "";
-  if (ev.type === "tool/call") { cls += " tool"; detail = d.name + "()"; }
-  else if (ev.type === "tool/result") {
-    if (d.is_error) cls += " err";
-    detail = (d.is_error ? "error: " : "") + (d.preview || "").slice(0, 240);
-  } else if (ev.type === "agent/status") { detail = d.status; }
-  else if (ev.type === "user/message") {
-    const fromGate = d.source && d.source !== "user";
-    if (fromGate) cls += " gate";
-    label = fromGate ? "stop-gate \u2192 agent" : "researcher \u2192 agent";
-    detail = (d.preview || "").slice(0, 320);
-  } else if (ev.type === "stream/error") { cls += " err"; detail = d.detail || ""; }
-  else { detail = JSON.stringify(d).slice(0, 160); }
-  const el = document.createElement("div");
-  el.className = cls;
-  el.innerHTML = '<div class="k">#' + (ev.seq != null ? ev.seq : "\u2013") + " " + esc(label) + "</div><div>" + esc(detail) + "</div>";
-  const box = $("activity");
-  box.appendChild(el); box.scrollTop = box.scrollHeight;
+    $("hdot").className = "dot " + (ok ? "ok" : "bad");
+    $("htxt").textContent = ok ? "harness 就绪 · " + h.harness_url : "harness 不可用：" + h.harness;
+  } catch (e) { $("hdot").className = "dot bad"; $("htxt").textContent = "后端未响应"; }
 }
 function watchEvents(runId) {
   if (stream) stream.close();
@@ -165,56 +267,63 @@ function watchEvents(runId) {
 async function refreshFiles(runId) {
   try {
     const r = await api(`/api/runs/${runId}/workspace`);
-    const box = $("files-list"); box.innerHTML = "";
-    if (!r.files.length) { box.textContent = "none yet"; return; }
+    const box = $("files-list");
+    if (!r.files.length) { box.innerHTML = '<div class="f"><span class="empty" style="padding:0">暂无</span></div>'; return; }
+    box.innerHTML = "";
     for (const f of r.files) {
       const row = document.createElement("div");
-      row.textContent = f.name + "  (" + f.size + " B)";
+      row.className = "f";
+      row.innerHTML = "<span>" + esc(f.name) + '</span><span class="sz">' + bytes(f.size) + "</span>";
       row.onclick = async () => {
-        const body = await api(`/api/runs/${runId}/file?name=${encodeURIComponent(f.name)}`);
-        $("file-view").textContent = body.text;
+        try {
+          const body = await api(`/api/runs/${runId}/file?name=${encodeURIComponent(f.name)}`);
+          $("file-view").textContent = body.text + (body.truncated ? "\n\n…（已截断）" : "");
+        } catch (e) { $("file-view").textContent = "读取失败：" + e.message; }
       };
       box.appendChild(row);
     }
-  } catch (e) { /* run may still be starting */ }
+  } catch (e) {}
 }
 async function refreshJob(runId) {
   try {
     const j = await api(`/api/runs/${runId}/job`);
-    const state = j.state || "unknown";
-    let cls = "";
-    if (state === "completed") cls = "ok";
-    else if (state === "failed") cls = "err";
-    else if (state === "running" || state === "pending") cls = "warn";
-    $("jobbox").innerHTML = `<span class="pill ${cls}">${esc(state)}</span>` +
-      (j.job_id ? ` <span class="muted">job ${esc(j.job_id)}</span>` : "") +
-      (j.elapsed ? ` <span class="muted">elapsed ${esc(j.elapsed)}</span>` : "") +
-      (j.exit_code ? ` <span class="muted">exit ${esc(j.exit_code)}</span>` : "") +
-      (j.error ? `<div class="muted">${esc(j.error)}</div>` : "");
+    const s = j.state || "unknown";
+    const zh = { completed:"已完成", failed:"失败", running:"运行中", pending:"排队中",
+                 cancelled:"已取消", not_submitted:"未提交", unknown:"未知" }[s] || s;
+    $("jobbox").innerHTML = '<span class="pill ' + esc(s) + '">' + esc(zh) + "</span>" +
+      (j.job_id ? "<span>作业 " + esc(j.job_id) + "</span>" : "") +
+      (j.elapsed ? "<span>已运行 " + esc(j.elapsed) + "</span>" : "") +
+      (j.exit_code ? "<span>退出码 " + esc(j.exit_code) + "</span>" : "");
     if (j.log && j.log.text) $("log-view").textContent = j.log.text.slice(-4000);
-  } catch (e) { /* not submitted yet */ }
+  } catch (e) {}
 }
+
 $("generate").onclick = async () => {
+  const text = $("request").value.trim();
+  const task = $("task").value;
+  // 没有描述又没有选任务时明确提示，而不是替用户编造一个需求。
+  if (!text && !task) {
+    $("reqwarn").style.display = "block"; $("request").focus(); return;
+  }
+  $("reqwarn").style.display = "none";
   const btn = $("generate");
-  btn.disabled = true; btn.textContent = "Generating\u2026";
-  $("activity").innerHTML = "";
+  btn.disabled = true; btn.textContent = "生成中…";
+  $("activity").innerHTML = '<div class="empty">正在创建任务…</div>';
+  $("jobbox").innerHTML = '<span class="pill">未提交</span>';
+  $("jobalert").innerHTML = ""; $("log-view").textContent = "—";
   try {
     const run = await api("/api/runs", {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request: $("request").value || "Create a Lennard-Jones simulation.",
-        task_id: $("task").value || null,
-        configuration: $("config").value,
-      }),
+      method:"POST", headers:{ "content-type":"application/json" },
+      body: JSON.stringify({ request: text, task_id: task || null, configuration: $("config").value }),
     });
     currentRun = run.run.run_id;
-    $("runinfo").textContent = currentRun + " \u00b7 " + run.run.configuration;
-    if (run.run.error) addEvent({ type: "stream/error", data: { detail: run.run.error } });
+    $("runinfo").textContent = "任务 " + currentRun + " · 配置 " + run.run.configuration;
+    if (run.run.error) addEvent({ type:"stream/error", data:{ detail: run.run.error } });
     const files = $("files").files;
     if (files.length) {
       const fd = new FormData();
       for (const f of files) fd.append("files", f);
-      await fetch(`/api/runs/${currentRun}/files`, { method: "POST", body: fd });
+      await fetch(`/api/runs/${currentRun}/files`, { method:"POST", body: fd });
     }
     $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
     watchEvents(currentRun);
@@ -222,42 +331,69 @@ $("generate").onclick = async () => {
     poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); }, 3000);
     refreshFiles(currentRun); refreshJob(currentRun);
   } catch (e) {
-    addEvent({ type: "stream/error", data: { detail: String(e.message || e) } });
-  } finally { btn.disabled = false; btn.textContent = "Generate simulation"; }
+    addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } });
+  } finally { btn.disabled = false; btn.textContent = "生成模拟"; }
 };
 $("followup").onclick = async () => {
   const msg = $("request").value.trim();
-  if (!currentRun || !msg) return;
+  if (!currentRun) return;
+  if (!msg) { $("reqwarn").style.display = "block"; return; }
+  $("reqwarn").style.display = "none";
   try {
     await api(`/api/runs/${currentRun}/message`, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method:"POST", headers:{ "content-type":"application/json" },
       body: JSON.stringify({ message: msg }),
     });
     $("request").value = "";
-  } catch (e) { addEvent({ type: "stream/error", data: { detail: String(e.message || e) } }); }
+  } catch (e) { addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } }); }
 };
 $("submit").onclick = async () => {
   if (!currentRun) return;
-  const btn = $("submit"); btn.disabled = true; btn.textContent = "Submitting\u2026";
+  const btn = $("submit"); btn.disabled = true; btn.textContent = "校验中…";
+  $("jobalert").innerHTML = "";
   try {
-    const r = await api(`/api/runs/${currentRun}/submit`, { method: "POST" });
+    const r = await api(`/api/runs/${currentRun}/submit`, { method:"POST" });
     if (r.submitted === false) {
-      addEvent({ type: "stream/error", data: { detail: "submit refused: " + (r.error || r.reason) } });
+      $("jobalert").innerHTML = '<div class="alert">提交被拒绝：' + esc(r.error || r.reason) + "</div>";
     } else {
-      addEvent({ type: "tool/call", data: { name: "hpc_submit_job \u2192 " + r.job_id } });
+      addEvent({ type:"tool/call", data:{ name:"hpc_submit_job → 作业 " + r.job_id } });
     }
     refreshJob(currentRun);
   } catch (e) {
     const v = e.body && e.body.validation;
-    const detail = v ? `validation refused submission: ${v.counts.errors} error(s)` : String(e.message || e);
-    addEvent({ type: "stream/error", data: { detail } });
-  } finally { btn.disabled = false; btn.textContent = "Validate & submit to HPC"; }
+    if (v) {
+      // 校验未通过时不提交，并逐条列出原因——这是 X 在起作用。
+      const items = (v.errors || []).map(x =>
+        '<div style="margin-top:4px">· <span class="mono">' + esc(x.code) + "</span> " +
+        esc(x.message) + (x.line ? "（第 " + x.line + " 行）" : "") + "</div>").join("");
+      $("jobalert").innerHTML = '<div class="alert">校验未通过，已拒绝提交（' +
+        v.counts.errors + " 个错误）：" + items + "</div>";
+      addEvent({ type:"stream/error", data:{ detail:"提交被校验拦截：" + v.counts.errors + " 个错误" } });
+    } else {
+      $("jobalert").innerHTML = '<div class="alert">提交失败：' + esc(e.message || e) + "</div>";
+    }
+  } finally { btn.disabled = false; btn.textContent = "校验并提交到超算"; }
 };
 $("cancel").onclick = async () => {
   if (!currentRun) return;
-  try { await api(`/api/runs/${currentRun}/cancel`, { method: "POST" }); refreshJob(currentRun); }
-  catch (e) { addEvent({ type: "stream/error", data: { detail: String(e.message || e) } }); }
+  try { await api(`/api/runs/${currentRun}/cancel`, { method:"POST" }); refreshJob(currentRun); }
+  catch (e) { $("jobalert").innerHTML = '<div class="alert">取消失败：' + esc(e.message || e) + "</div>"; }
 };
+/* ---- 主题：默认跟随系统，手动选择后持久化 ---- */
+const THEME_KEY = "siga-theme";
+function applyTheme(mode) {
+  document.documentElement.setAttribute("data-theme", mode);
+  $("theme").textContent = mode === "light" ? "☀️ 浅色" : "🌙 深色";
+}
+const saved = localStorage.getItem(THEME_KEY);
+const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+applyTheme(saved || (prefersLight ? "light" : "dark"));
+$("theme").onclick = () => {
+  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+  applyTheme(next);
+  localStorage.setItem(THEME_KEY, next);
+};
+
 probe(); setInterval(probe, 15000);
 </script>
 </body>

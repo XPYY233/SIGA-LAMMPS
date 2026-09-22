@@ -138,7 +138,18 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
 
     @app.post("/api/runs")
     async def create_run(payload: CreateRunRequest) -> dict[str, Any]:
-        """Create a run: allocate a workspace, then start a harness session in it."""
+        """Create a run: allocate a workspace, then start a harness session in it.
+
+        A request with no description and no task is refused rather than filled
+        in. An earlier version substituted a generic Lennard-Jones prompt, which
+        meant an empty form silently generated a simulation nobody asked for —
+        the failure a researcher would least expect and last notice.
+        """
+        if not payload.request.strip() and not payload.task_id:
+            raise HTTPException(
+                status_code=422,
+                detail="a run needs either a description or a benchmark task; refusing to invent one",
+            )
         run_id = f"run-{uuid.uuid4().hex[:10]}"
         workspace = resolved.repo_root / "workspace" / run_id
         workspace.mkdir(parents=True, exist_ok=True)
