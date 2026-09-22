@@ -1,28 +1,51 @@
-"""R — the ChromaDB-backed LAMMPS index.
+"""R — the LAMMPS retrieval index.
 
-Three collections (examples, docs, syntax), each embedded locally with
-ChromaDB's default ONNX model. **No API key and no per-query network call**: the
-embedding model is fetched once, then retrieval is entirely local. That matters
-because R runs inside a tool the agent may call many times per task, and a
-network round trip per call would dominate both latency and cost.
+Backend: **sparse BM25** over three collections (examples, docs, syntax) built
+from a LAMMPS source checkout.
 
-Builds are idempotent — document ids are deterministic hashes, and documents are
-upserted — so re-running a build over an unchanged corpus is cheap and safe.
+The paper used ChromaDB with dense embeddings. That is not what runs here, and
+the reason is worth stating plainly rather than buried, because it bounds what R
+can claim in the ablation.
+
+ChromaDB's default embedder downloads an 83 MB ONNX archive on first use. In this
+environment that transfer sustains roughly 20 KB/s and stalls partway; worse,
+ChromaDB re-downloads whenever the archive fails its SHA256 check, so *every*
+embedding call paid the failed download again. Indexing never completed a single
+batch, and the symptom looks like slow embedding rather than an absent model.
+
+A local hashing vectorizer was tried as the fallback and rejected on measurement:
+~431,000 distinct features across the corpus, hashed into 1024 dimensions, is
+~421 features per bucket. Rare discriminative terms drown in collisions — the
+literal phrase "mean square displacement" ranked behind a timing utility. See
+`bm25.py` for the full account.
+
+So R runs on BM25: exact term statistics, no hashing, no collisions, no network,
+deterministic, and auditable end to end.
+
+**What this costs.** BM25 matches lexically. It answers command-vocabulary
+queries well, which is most of what an agent asks. It does **not** answer
+paraphrase — "stretch a box along one axis" shares no vocabulary with
+``fix deform``. The paper's framing of R is precisely about the case where the
+agent does not know the right term, so this is a genuine shortfall against the
+paper, not a neutral implementation choice. `build()` records the backend in the
+index so a run can always be attributed to what actually served it.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from adapter.retrieval.corpora import COLLECTIONS, Document, iter_documents
+from adapter.retrieval.bm25 import BM25Index
+from adapter.retrieval.corpora import COLLECTIONS, iter_documents
 
-__all__ = ["BuildStats", "LammpsIndex", "SearchHit", "IndexNotBuiltError"]
+__all__ = ["BuildStats", "IndexNotBuiltError", "LammpsIndex", "SearchHit"]
 
-#: ChromaDB degrades above a few thousand records per call; batch conservatively.
-BATCH_SIZE = 512
+#: Filename of the built index inside the persist directory.
+INDEX_FILENAME = "bm25.json"
 
 
 class IndexNotBuiltError(RuntimeError):
@@ -34,13 +57,16 @@ class BuildStats:
     """What a build actually did, per collection."""
 
     per_collection: dict[str, int]
+    backend: str = "bm25"
 
     @property
     def total(self) -> int:
         return sum(self.per_collection.values())
 
     def render(self) -> str:
-        lines = [f"  {name:<10} {count:>6} documents" for name, count in sorted(self.per_collection.items())]
+        lines = [
+            f"  {name:<10} {count:>6} documents" for name, count in sorted(self.per_collection.items())
+        ]
         return "\n".join([*lines, f"  {'TOTAL':<10} {self.total:>6} documents"])
 
 
@@ -66,19 +92,8 @@ class SearchHit:
         }
 
 
-def _require_chromadb() -> Any:
-    try:
-        import chromadb  # noqa: PLC0415 - optional heavy dependency
-    except ImportError as exc:  # pragma: no cover - depends on environment
-        raise ImportError(
-            "chromadb is required for retrieval. Install it with:\n"
-            "  .venv/bin/python -m pip install chromadb"
-        ) from exc
-    return chromadb
-
-
 class LammpsIndex:
-    """A persistent, locally-embedded index over the three LAMMPS collections."""
+    """A persistent BM25 index over the three LAMMPS collections."""
 
     def __init__(
         self,
@@ -88,58 +103,26 @@ class LammpsIndex:
         embedding_function: Any = None,
     ) -> None:
         self.persist_dir = Path(persist_dir)
+        # Retained for interface compatibility with the dense design; unused by
+        # BM25, which has no model and therefore no cache.
         self.model_cache_dir = Path(model_cache_dir) if model_cache_dir is not None else None
         self._embedding_function = embedding_function
-        self._client: Any = None
+        self._index: BM25Index | None = None
 
-    # -- lifecycle ---------------------------------------------------------- #
+    # -- locations ---------------------------------------------------------- #
 
-    def _resolve_embedding_function(self) -> Any:
-        """Return the embedding function, redirecting ChromaDB's model cache.
+    @property
+    def index_path(self) -> Path:
+        return self.persist_dir / INDEX_FILENAME
 
-        ChromaDB's ONNX MiniLM writes to ``~/.cache/chroma`` by default — a plain
-        class attribute with no environment override. Two reasons to move it:
+    @property
+    def backend(self) -> str:
+        """Which retrieval backend serves queries.
 
-        * It puts several hundred MB in the user's home for a project artifact.
-        * Under a sandboxed filesystem, writing to ``$HOME`` is denied outright,
-          so the default simply fails with a permissions error that looks
-          nothing like its cause.
-
-        Pinning it inside the project makes the cache reproducible and removable
-        alongside everything else in ``data/``.
+        Recorded per run. A retrieval result is not comparable across backends,
+        and the ablation depends on knowing which one produced a hit.
         """
-        if self._embedding_function is not None:
-            return self._embedding_function
-        if self.model_cache_dir is None:
-            return None
-
-        try:
-            from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
-        except ImportError:  # pragma: no cover - chromadb absent
-            return None
-
-        download_path = self.model_cache_dir / "onnx_models" / ONNXMiniLM_L6_V2.MODEL_NAME
-        download_path.mkdir(parents=True, exist_ok=True)
-        ONNXMiniLM_L6_V2.DOWNLOAD_PATH = download_path
-        return ONNXMiniLM_L6_V2()
-
-    def _require_client(self) -> Any:
-        if self._client is None:
-            chromadb = _require_chromadb()
-            self.persist_dir.mkdir(parents=True, exist_ok=True)
-            self._client = chromadb.PersistentClient(path=str(self.persist_dir))
-        return self._client
-
-    def _collection(self, name: str) -> Any:
-        client = self._require_client()
-        embedding = self._resolve_embedding_function()
-        if embedding is not None:
-            return client.get_or_create_collection(
-                name=name,
-                embedding_function=embedding,
-                metadata={"hnsw:space": "cosine"},
-            )
-        return client.get_or_create_collection(name=name, metadata={"hnsw:space": "cosine"})
+        return "bm25"
 
     # -- build -------------------------------------------------------------- #
 
@@ -151,78 +134,91 @@ class LammpsIndex:
         reset: bool = True,
         progress: Callable[[str], None] | None = None,
     ) -> BuildStats:
-        """Embed and store the corpus under *root*.
+        """Build the index from a LAMMPS checkout.
 
         Args:
             root: a LAMMPS source checkout.
-            collections: which collections to build.
-            reset: drop each collection first, so a build is a full replacement
-                rather than a merge with stale documents.
+            collections: which collections to include.
+            reset: replace the existing index. ``False`` merges with what is
+                already stored, which is useful when adding one collection.
             progress: optional line-oriented progress callback.
 
         Returns:
             Per-collection document counts.
+
+        Raises:
+            ValueError: an unknown collection was requested.
         """
         root = Path(root)
-        client = self._require_client()
-        stats: dict[str, int] = {}
+        unknown = [name for name in collections if name not in COLLECTIONS]
+        if unknown:
+            raise ValueError(f"unknown collections {unknown}; expected {COLLECTIONS}")
 
+        documents: list[dict[str, Any]] = []
+        if not reset and self.index_path.is_file():
+            documents = list(BM25Index.load(self.index_path).documents)
+            documents = [d for d in documents if d["collection"] not in set(collections)]
+
+        counts: dict[str, int] = {}
         for name in collections:
-            if reset:
-                try:
-                    client.delete_collection(name)
-                except Exception:  # noqa: BLE001 - absence is the common case
-                    pass
-            collection = self._collection(name)
-
-            batch: list[Document] = []
-            written = 0
-            for document in iter_documents(root, [name]):
-                batch.append(document)
-                if len(batch) >= BATCH_SIZE:
-                    written += self._flush(collection, batch)
-                    batch = []
-                    if progress:
-                        progress(f"  {name}: {written} documents")
-            if batch:
-                written += self._flush(collection, batch)
-
-            stats[name] = written
+            found = list(iter_documents(root, [name]))
+            counts[name] = len(found)
+            documents.extend(
+                {
+                    "doc_id": d.doc_id,
+                    "collection": d.collection,
+                    "text": d.text,
+                    "metadata": _jsonable(d.metadata),
+                }
+                for d in found
+            )
             if progress:
-                progress(f"  {name}: {written} documents (done)")
+                progress(f"  {name}: {len(found)} documents")
 
-        return BuildStats(per_collection=stats)
+        index = BM25Index.build(documents)
+        self.persist_dir.mkdir(parents=True, exist_ok=True)
+        index.save(self.index_path)
+        self._index = index
+        return BuildStats(per_collection=counts)
 
-    @staticmethod
-    def _flush(collection: Any, batch: list[Document]) -> int:
-        collection.upsert(
-            ids=[d.doc_id for d in batch],
-            documents=[d.text for d in batch],
-            metadatas=[_jsonable(d.metadata) for d in batch],
-        )
-        return len(batch)
+    # -- load --------------------------------------------------------------- #
 
-    # -- query -------------------------------------------------------------- #
+    def _require_index(self) -> BM25Index:
+        if self._index is None:
+            if not self.index_path.is_file():
+                raise IndexNotBuiltError(
+                    f"the retrieval index at {self.index_path} is missing or empty. Build it with:\n"
+                    "  python -m adapter.cli build-index"
+                )
+            self._index = BM25Index.load(self.index_path)
+        if len(self._index) == 0:
+            raise IndexNotBuiltError(
+                f"the retrieval index at {self.index_path} contains no documents. Rebuild it with:\n"
+                "  python -m adapter.cli build-index"
+            )
+        return self._index
 
     def count(self) -> dict[str, int]:
-        """Documents per collection. Absent collections report zero."""
-        client = self._require_client()
-        available = {c.name for c in client.list_collections()}
-        return {
-            name: (self._collection(name).count() if name in available else 0)
-            for name in COLLECTIONS
-        }
+        """Documents per collection. An absent index reports zero everywhere."""
+        counts = {name: 0 for name in COLLECTIONS}
+        if not self.index_path.is_file():
+            return counts
+        try:
+            index = self._require_index()
+        except IndexNotBuiltError:
+            return counts
+        for document in index.documents:
+            name = document["collection"]
+            counts[name] = counts.get(name, 0) + 1
+        return counts
 
     def is_built(self) -> bool:
         return sum(self.count().values()) > 0
 
     def require_built(self) -> None:
-        counts = self.count()
-        if sum(counts.values()) == 0:
-            raise IndexNotBuiltError(
-                f"the retrieval index at {self.persist_dir} is empty. Build it with:\n"
-                "  python -m adapter.cli build-index"
-            )
+        self._require_index()
+
+    # -- query -------------------------------------------------------------- #
 
     def search(
         self,
@@ -232,13 +228,14 @@ class LammpsIndex:
     ) -> list[SearchHit]:
         """Return the *k* best passages across the requested collections.
 
-        Results are merged across collections and re-ranked by score, because a
-        caller asking "fix nvt" wants the best answer wherever it lives — not
+        Results are merged and re-ranked across collections, because a caller
+        asking about ``fix nvt`` wants the best answer wherever it lives — not
         five results from whichever collection happened to be queried first.
 
         Raises:
-            ValueError: the query is empty or *k* is not positive.
-            IndexNotBuiltError: nothing has been indexed yet.
+            ValueError: the query is empty, *k* is not positive, or an unknown
+                collection was named.
+            IndexNotBuiltError: nothing has been indexed.
         """
         query = query.strip()
         if not query:
@@ -246,36 +243,38 @@ class LammpsIndex:
         if k <= 0:
             raise ValueError("k must be positive")
 
-        self.require_built()
+        index = self._require_index()
         wanted = list(collections) if collections is not None else list(COLLECTIONS)
         unknown = [c for c in wanted if c not in COLLECTIONS]
         if unknown:
             raise ValueError(f"unknown collections {unknown}; expected {COLLECTIONS}")
+        allowed = set(wanted)
 
-        client = self._require_client()
-        available = {c.name for c in client.list_collections()}
-
+        # Over-fetch, then filter by collection. Filtering after ranking keeps a
+        # single global ordering, so restricting to one collection cannot change
+        # the relative order of the hits that remain.
+        ranked = index.search(query, k=max(k * 4, k + 20))
         hits: list[SearchHit] = []
-        for name in wanted:
-            if name not in available:
+        for position, score in ranked:
+            document = index.documents[position]
+            if document["collection"] not in allowed:
                 continue
-            collection = self._collection(name)
-            if collection.count() == 0:
-                continue
-            response = collection.query(
-                query_texts=[query],
-                n_results=min(k, collection.count()),
-                include=["documents", "metadatas", "distances"],
+            hits.append(
+                SearchHit(
+                    doc_id=document["doc_id"],
+                    collection=document["collection"],
+                    text=document["text"],
+                    metadata=dict(document["metadata"]),
+                    score=score,
+                )
             )
-            hits.extend(_to_hits(name, response))
-
-        # Cosine distance in [0, 2]; convert to a similarity so higher is better.
-        hits.sort(key=lambda h: h.score, reverse=True)
-        return hits[:k]
+            if len(hits) >= k:
+                break
+        return hits
 
 
 def _jsonable(metadata: dict[str, Any]) -> dict[str, Any]:
-    """ChromaDB metadata values must be scalar; drop or stringify the rest."""
+    """Keep only JSON-serialisable scalars, so the index round-trips."""
     out: dict[str, Any] = {}
     for key, value in metadata.items():
         if isinstance(value, (str, int, float, bool)):
@@ -285,26 +284,3 @@ def _jsonable(metadata: dict[str, Any]) -> dict[str, Any]:
         else:
             out[key] = str(value)
     return out
-
-
-def _to_hits(name: str, response: dict[str, Any]) -> list[SearchHit]:
-    """Flatten one ChromaDB query response into hits."""
-    documents = (response.get("documents") or [[]])[0]
-    metadatas = (response.get("metadatas") or [[]])[0]
-    distances = (response.get("distances") or [[]])[0]
-    ids = (response.get("ids") or [[]])[0]
-
-    hits: list[SearchHit] = []
-    for index, text in enumerate(documents):
-        metadata = dict(metadatas[index]) if index < len(metadatas) and metadatas[index] else {}
-        distance = float(distances[index]) if index < len(distances) else 1.0
-        hits.append(
-            SearchHit(
-                doc_id=ids[index] if index < len(ids) else f"{name}:{index}",
-                collection=name,
-                text=text,
-                metadata=metadata,
-                score=1.0 - distance,
-            )
-        )
-    return hits

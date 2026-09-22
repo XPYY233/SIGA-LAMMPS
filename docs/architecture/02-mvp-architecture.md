@@ -146,15 +146,59 @@ integrators, the SLLOD Couette pattern, MSD compute syntax.
 
 ### R — Retrieval
 
-Three ChromaDB collections mirroring the paper: **example scripts**,
-**documentation RST**, **command syntax extracted from the source tree**.
+Three collections mirroring the paper: **example scripts** (1,089), **documentation
+RST** (4,977 chunks), **command syntax extracted from the source tree** (906).
+Total 6,972 documents, built from an official LAMMPS checkout in ~2 seconds.
 
-`build_index.py` ingests from a corpus root; the raw corpus is **not committed**
-(it is large, licensed upstream, and fetchable) — `data/raw/` is git-ignored and
-a documented `make corpus` step populates it. The index is rebuildable.
+**Backend deviation — this is BM25, not ChromaDB.** The paper used ChromaDB with
+dense embeddings, and this document originally specified the same. Two measured
+findings forced the change, and the second is a limitation worth stating plainly
+rather than burying:
 
-Tool: `search_lammps(query, k=5)` → `source`, `snippet`, `command`/`example`,
-`metadata`. The agent never walks the documentation tree.
+1. ChromaDB's default embedder downloads an **83 MB** ONNX archive on first use.
+   Here that transfer sustains ~20 KB/s and stalls; worse, ChromaDB re-downloads
+   whenever the archive fails its SHA256 check, so every embedding call paid the
+   failed download again. Indexing never completed a single batch, and the
+   symptom reads as "embedding is slow" rather than "the model is absent".
+2. A local hashing vectorizer was tried and rejected on measurement: ~431,000
+   distinct features hashed into 1024 dimensions is **~421 features per bucket**.
+   Rare discriminative terms drown in collisions — the literal phrase "mean
+   square displacement" ranked behind a timing utility. No dimension that fits in
+   memory repairs it, because the required width is the size of the feature space.
+
+BM25 is the right structure for lexical matching: a sparse inverted index with
+exact term statistics and no hashing, so there are no collisions to lose signal
+in. It needs no network, is deterministic, and is auditable end to end.
+
+**Measured quality, which bounds what R may claim in the ablation:**
+
+| Query | Outcome |
+|---|---|
+| `compute msd`, `fix deform`, `fix nvt/sllod`, `pair_style lj/cut` | top-1 correct |
+| `spherical indenter pressing into a surface` | `fix_indent` top-1 |
+| `stretch a box along one axis` | `fix_deform` **absent** from top-5 |
+| `thermostat to hold a constant temperature` | `nvt` **absent** from top-5 |
+
+So R serves command-vocabulary queries well — an agent that knows it needs
+`fix deform` and wants the syntax is served. It does **not** serve paraphrase, and
+the paper frames R as existing precisely *"for when the agent does not know the
+right simulator terms to search for"*. **This is a real shortfall against the
+paper, not a neutral implementation choice**, and it must be reported as such in
+any result: R's measured contribution here is a lower bound on the paper's R.
+Both misses are recorded as strict `xfail`s in `tests/test_retrieval.py`, so if
+either starts passing the suite fails and the limitation gets revisited.
+
+Closing the gap needs dense embeddings from a model that can actually be fetched.
+
+Corpus provenance is recorded per run. The corpus is an official LAMMPS checkout
+(`github.com/lammps/lammps`); it is **not committed** (large, upstream-licensed),
+so `data/` is git-ignored and the index is rebuilt with
+`python -m adapter.cli build-index`.
+
+Tool: `search_lammps(query, k=5)` → `source`, `collection`, `snippet`, `command`,
+`score`, `metadata`. The agent never walks the documentation tree. The backend
+is recorded with the index, because a retrieval result is not comparable across
+backends.
 
 ### X — Validator
 
