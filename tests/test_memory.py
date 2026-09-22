@@ -142,18 +142,36 @@ def test_primer_points_at_retrieval_for_details(primer: str) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_primer_has_no_stray_variable_references(primer: str) -> None:
+#: The one variable the plugin registers and interpolates. Everything else must
+#: be literal text, because an unregistered reference fails prompt assembly.
+REGISTERED_VARIABLES = frozenset({"siga_task"})
+
+
+def test_primer_references_only_registered_variables(primer: str) -> None:
     """A `{{name}}` the plugin has not registered makes prompt assembly FAIL.
 
-    `renderPrompt` interpolates strictly: an unresolved reference is an
-    assembly error, not an empty string. So a literal brace pair can take the
-    whole agent down, and this test is the fence.
+    `renderPrompt` interpolates strictly: an unresolved reference is an assembly
+    error, not an empty string. So a stray brace pair can take the whole agent
+    down. This asserts the primer references exactly the variables
+    `harness/siga-plugin/src/index.ts` registers.
     """
-    references = re.findall(r"\{\{\s*([^}]*?)\s*\}\}", primer)
-    assert references == [], (
-        f"primer contains template references that must be registered as prompt "
-        f"variables or escaped: {references}"
+    references = set(re.findall(r"\{\{\s*([^}]*?)\s*\}\}", primer))
+    unregistered = references - REGISTERED_VARIABLES
+    assert not unregistered, (
+        f"primer references variables the plugin does not register: {sorted(unregistered)}. "
+        f"Registered: {sorted(REGISTERED_VARIABLES)}"
     )
+    # And the registration must not go stale: a registered-but-unused variable is
+    # dead weight in the plugin.
+    assert references == REGISTERED_VARIABLES, (
+        f"primer references {sorted(references)} but the plugin registers "
+        f"{sorted(REGISTERED_VARIABLES)}; keep them in step."
+    )
+
+
+def test_primer_binds_the_active_task(primer: str) -> None:
+    """M is task-aware: the benchmark driver's task id reaches the primer."""
+    assert "{{siga_task}}" in primer
 
 
 def test_primer_does_not_contain_an_unclosed_brace_pair(primer: str) -> None:

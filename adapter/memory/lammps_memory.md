@@ -1,5 +1,7 @@
 # LAMMPS input-script primer
 
+**Active task:** {{siga_task}}
+
 You are authoring LAMMPS input scripts. This primer is always in your context.
 It covers the command skeleton, the ordering rules LAMMPS actually enforces, and
 the mistakes that most often make a script fail outright **or silently compute

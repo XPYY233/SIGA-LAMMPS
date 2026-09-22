@@ -1,0 +1,20 @@
+{
+  "name": "siga-lammps-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Harness-side half of the SIGA-LAMMPS adapter: M (always-on procedural memory) and S (the enforced stop gate).",
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/schemastery": "*"
+  }
+}
