@@ -108,8 +108,20 @@ SIGA-LAMMPS/
 `adapter/memory/lammps_memory.md`, injected by `harness/siga-plugin` as:
 
 ```ts
-ctx.systemPrompt.section({ name: 'siga-lammps-memory', order: 10, text })
+// The primer is read from disk verbatim — it is a document, not code.
+ctx.systemPrompt.section({ name: 'siga-lammps-memory', order: 10, text: primer })
+
+// Run-specific values are interpolated into it, so the primer stays static.
+ctx.systemPrompt.variable('siga_task', () => activeTask(scope))
 ```
+
+M stays a **static, reviewable Markdown file** — which is what a cheatsheet is —
+and the few values that vary per run arrive through `{{siga_task}}`-style
+variables registered with `systemPrompt.variable(name, provider)`
+(`core/system-prompt/src/index.ts:446`). Names must match `[a-z][a-z0-9_]*`,
+scoped values shadow globals, and rendering a section whose variable resolves to
+`undefined` **fails loud** — so a missing variable surfaces immediately rather
+than silently shipping a primer with a hole in it.
 
 `order` follows the harness convention documented at
 `core/system-prompt/src/index.ts:53-75`: `-100` is harness identity, `0` the
@@ -282,6 +294,7 @@ harness checkout, and the first two correct assumptions I had made.
 | Exports | Harness plugins use **named exports, no default export** | `export const name`, `export const inject`, `export function apply(ctx)` |
 | Lifecycle | **`ctx.on('ready')` and `ctx.on('dispose')` do not exist** | Cleanup must go through `ctx.effect(fn, label?)` disposers, which Cordis unwinds on unload |
 | Plugin config | `Config` is a schemastery schema (`z.object({...})`) | Our plugin declares its validator path, block budget, and workspace root this way |
+| Prompt service | `ctx.systemPrompt` exposes **five** effect-based methods: `section()` `:381`, `context()` `:398`, `suppressRuntimeContext()` `:418`, `tools()` `:430`, `variable()` `:446` | M uses `section()` + `variable()`. We do **not** need `tools()` — MCP already contributes our schemas |
 | Prompt sections | No token budget or truncation inside `assemble()`; size pressure is `packages/compaction`'s job | M's size assertion in `tests/` is the only guard. Confirmed, not assumed. |
 | Tool args | `tools/pre-execute` **cannot rewrite arguments** — only `allow`/`deny`/`ask`. Args are excluded from rewriting *because they are already logged and presented* | Good for us: what the agent asked for is exactly what the audit log shows |
 | Tool results | `tools/post-execute` **can** replace content/value or `block` with feedback | Available if we ever need to redact a remote path from a result |
