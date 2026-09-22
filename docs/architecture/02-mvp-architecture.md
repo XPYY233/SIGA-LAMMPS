@@ -340,6 +340,34 @@ status, evaluation results (all four levels), token usage, wall-clock time,
 failure category. Any failure must answer *what failed, and at which layer* —
 not `score = 0`.
 
+**Most of that record is already an artefact we can just keep.** The harness
+exposes `GET /api/session.export?sessionId=…&includeDescendants=true`, which
+returns a ZIP of the entire session lineage (route at
+`apiproxy/src/fetch/handler.ts:260`; `includeDescendants` in
+`api/downloads.schema.ts:21`). That ZIP carries the tool calls, validator
+results, termination attempts and token usage as durable logged facts, so the
+evaluator **archives it per run** instead of reconstructing those from a live
+stream. Reconstruction would be both more code and less trustworthy: the log is
+the source of truth, and a reimplementation of it is a second opinion.
+
+Only the fields the harness has no reason to know are added on top — `run_id`,
+the task id, the adapter configuration, the SLURM script and job id, wall-clock
+time, and the failure category.
+
+**Benchmark runs can be driven and parallelised over plain HTTP.** Alongside the
+twelve `session.*` methods, the RPC surface exposes four `subagent.*` methods —
+`list`, `history`, `prompt`, `interrupt` (`apiproxy/src/api/rpc-map.ts:37-40`).
+An external driver speaking `POST /api/<method>` can therefore spawn, message and
+interrupt nested sessions without the SDK's stdio path. This matters because the
+controlled-comparison invariants require isolated runs per configuration: each
+of the four presets gets its own session and workspace, and the driver can run
+them concurrently rather than serially.
+
+Note the interaction with the missing stream resume: because `since` is ignored,
+a reconnecting Area B reader must re-read `session.history` and reconcile by
+`seq`. `session.history` returns `{ events, hasMore, projections? }`, so paging
+backwards is supported and a gap is recoverable rather than permanent.
+
 **Controlled comparison invariants** (§10): same model and version, same harness,
 same specification, same benchmark, same available files, same HPC environment,
 same resource limits, same inference settings, **same maximum trajectory
