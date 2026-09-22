@@ -167,18 +167,23 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
             request=payload.request.strip(),
         )
         runs[run_id] = run
-        _write_metadata(run)
 
         try:
             run.session_id = await harness.create_session(
                 agent_preset=payload.configuration, cwd=str(workspace)
             )
+            # Written only once the session id exists. The earlier version wrote
+            # before the assignment, so the persisted record always said
+            # `session_id: null` and a run recovered from disk had no way to have
+            # its activity replayed — which is why history could not be reviewed.
+            _write_metadata(run)
             await harness.prompt(run.session_id, _compose_request(payload.request, payload.task_id))
         except (HarnessError, HarnessRpcError) as exc:
             # The run is kept rather than discarded: the workspace and the reason
             # for failure are both useful, and losing them would leave a
             # researcher with an empty directory and no explanation.
             run.error = str(exc)
+            _write_metadata(run)
             return JSONResponse(status_code=502, content={"run": run.to_dict(), "error": str(exc)})
 
         asyncio.create_task(_pump_events(run, harness))
@@ -258,7 +263,25 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         only the socket.
         """
         run = _require(runs, run_id, resolved)
-        await _backfill_events(run, harness)
+        await _backfill_events(run, harness, _dsh_home())
+
+        if not run.events:
+            # Say why rather than streaming nothing. A viewer left on "正在加载…"
+            # cannot tell a missing session from a slow one.
+            if not run.session_id:
+                run.events.append({
+                    "type": "stream/error",
+                    "data": {"detail":
+                             "该任务没有记录会话 id，无法回放活动流。"
+                             "文件与作业状态仍可在右侧查看；活动流只对此后新建的任务可用。"},
+                })
+            else:
+                run.events.append({
+                    "type": "stream/error",
+                    "data": {"detail":
+                             "harness 中已找不到该会话，活动流无法回放。"
+                             "文件与作业状态仍可查看。"},
+                })
 
         async def generate() -> AsyncIterator[bytes]:
             sent = 0
@@ -455,6 +478,9 @@ def _discover_runs(settings: Settings, known: dict[str, "Run"]) -> list["Run"]:
         if path.name in known:
             continue
         meta = _read_metadata(path)
+        # A run directory predating run.json still has its files and logs, which
+        # is most of what a researcher comes back for. Reporting it as unknown
+        # rather than hiding it keeps that value.
         discovered.append(
             Run(
                 run_id=path.name,
@@ -625,6 +651,13 @@ _FINDING_LABELS: dict[str, str] = {
 }
 
 
+def _dsh_home() -> Path:
+    """The harness home this console starts. Kept beside the workspace, never ~/.dsh."""
+    import os
+
+    return Path(os.environ.get("SIGA_HARNESS_HOME") or (REPO_ROOT / ".dsh-web"))
+
+
 def _relay(run: "Run", event: dict[str, Any]) -> bool:
     """Append one durable event to a run's buffer, if Area B should show it.
 
@@ -648,14 +681,64 @@ def _relay(run: "Run", event: dict[str, Any]) -> bool:
     return True
 
 
-async def _backfill_events(run: "Run", harness: HarnessClient) -> None:
-    """Populate a run's activity from its session history.
+def _session_events_from_disk(run: "Run", dsh_home: Path) -> list[dict[str, Any]]:
+    """Read a run's events straight from its session log.
+
+    The log is the durable source of truth, and reading it needs neither the
+    harness to be running nor a session id to have been recorded — which matters,
+    because an earlier version persisted the id before it was assigned and so
+    could not replay any run created before that was fixed. Matching is by project
+    directory, since the harness names it after the session's cwd.
+    """
+    import subprocess as sp
+
+    root = dsh_home / "sessions"
+    if not root.is_dir():
+        return []
+    candidates = [d for d in root.iterdir() if d.is_dir() and run.run_id in d.name]
+    if not candidates:
+        return []
+    events: list[dict[str, Any]] = []
+    for directory in candidates:
+        for log in sorted(directory.rglob("session.jsonl*")):
+            try:
+                if log.suffix == ".zstd":
+                    raw = sp.run(["unzstd", "-c", str(log)], capture_output=True).stdout
+                    text = raw.decode("utf-8", "replace")
+                else:
+                    text = log.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue
+    return events
+
+
+async def _backfill_events(run: "Run", harness: HarnessClient, dsh_home: Path | None = None) -> None:
+    """Populate a run's activity, from the harness or from the log on disk.
 
     Runs discovered on disk have no live pump, so without this the console sat on
-    "正在加载该任务的活动流…" forever. The events were never lost — the session log
-    is durable and the harness can replay it — they simply had no reader.
+    "正在加载该任务的活动流…" forever. The events were never lost — the session log is
+    durable — they simply had no reader.
     """
-    if run.events or not run.session_id:
+    if run.events:
+        return
+
+    # Prefer the log: it works for every run, needs no live harness, and does not
+    # depend on a session id having been recorded.
+    if dsh_home is not None:
+        for event in _session_events_from_disk(run, dsh_home):
+            _relay(run, event)
+        if run.events:
+            return
+
+    if not run.session_id:
         return
     try:
         payload = await harness.history(run.session_id, max_messages=400)
