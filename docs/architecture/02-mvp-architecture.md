@@ -276,6 +276,45 @@ FastAPI backend that is a **thin, honest proxy** plus run management:
 | `GET  /api/runs/{id}/job` | parsed job state + thermo + file list (Area C) |
 | `POST /api/runs/{id}/cancel` | `session.cancel` and/or `scancel` |
 
+### ⚠️ Our web app is the trust boundary — it must bind loopback
+
+Verified against `packages/client/connection/src/index.ts:88-112`, which is worth
+quoting because it settles a question we would otherwise have guessed at:
+
+> CHOOSING one is not pinned, and `agentPreset.list` is not either. [...] The
+> deeper reason is that the capability is not the preset's to grant: the
+> deployment's own default already carries `bash` and the filesystem tools, so
+> **any caller that may start a session at all can already run commands as this
+> process.** Pinning the switch would be a fence beside an open gate.
+
+Two consequences, one enabling and one requiring care:
+
+- **Enabling:** `session.create` accepts `agentPreset` and is *not* loopback-pinned
+  (`PRIVILEGED_METHODS` at `:90-107` lists only `agentPreset.read/copy/remove/
+  openDocument`, `host.pickDirectory/openPath`, `settings.*`, `credentials.*`,
+  `llm.discoverModels`). So D6's preset-driven ablation is reachable exactly as
+  planned, with no privileged call.
+- **Requiring care:** the `/api` fence is explicitly **a DNS-rebinding fence, not
+  an authentication layer**. Anyone who can reach our FastAPI app effectively
+  holds the ability to start sessions that run commands as this user. Therefore
+  **the SIGA web app binds `127.0.0.1` only.** Exposing it on a LAN address
+  without adding real authentication would hand out that capability, and the
+  harness has already told us it will not stop us.
+
+### Transport: the event stream is SSE, not WebSocket
+
+An earlier note in this project recorded these as WebSocket downlinks. That is
+wrong. `packages/host/apiproxy/src/fetch/handler.ts:252-258` comments the routes
+as *"No-envelope read channels (SSE GET streams + host-only download)"* and
+answers them with `sseResponse(...)`, which emits
+`content-type: text/event-stream` with `data: <json>\n\n` framing
+(`handler.ts:205-235`). `registerUpgrade` — the WebSocket path — appears only in
+a webserver invariant probe, never for events.
+
+Practical effect: Area B is consumed with a plain streaming HTTP GET
+(`httpx` in Python), not a WebSocket client. The stream opens with a
+`: connected` comment line so an idle channel is visibly alive.
+
 **Area B shows tool calls, statuses, short action summaries, and validator
 feedback — never hidden chain-of-thought.** We forward only what the session log
 already makes durable: `tool/call`, `tool/result`, `agent/status`, and
@@ -286,8 +325,9 @@ it blocks a turn. Both are events the harness already writes.
 
 ## Implementation constraints confirmed against source
 
-Concrete API facts the plugin must respect. These were verified against the
-harness checkout, and the first two correct assumptions I had made.
+Concrete API facts the plugin must respect. Every entry was verified against the
+harness source; several of them **correct** earlier assumptions in this project
+rather than merely confirming them.
 
 | Topic | Fact | Consequence for us |
 |---|---|---|
@@ -302,7 +342,13 @@ harness checkout, and the first two correct assumptions I had made.
 | Approval | `ctx.approval.request({agent, toolName, callId?, reason?, signal?})`; policy `ask` \| `never`; fails **closed** to deny without an answerer | The right gate for HPC submission — a human click, not a silent upload |
 | Tool visibility | `ctx.tools.restrict({ allow?, deny? })` — scoped contexts only, throws on a global one | Keeps HPC tools out of presets that should not have them |
 | Whole-prompt transform | `system-prompt/assemble` waterfall exists | Not needed for M; `section()` is sufficient and less invasive |
-| Durable events | 18 *in-repo* packages extend `SessionEventMap` by declaration merging — but `known-event-types.ts:15-17` excludes out-of-repo plugins **by construction**, and `Session.append` offers no `ignorable` escape hatch | **We may not invent a `siga/*` event type.** All durable and model-visible state rides known types — see below |
+| Durable events | 18 *in-repo* packages extend `SessionEventMap` by declaration merging — but `known-event-types.ts`:15-17 excludes out-of-repo plugins **by construction**, and `Session.append` offers no `ignorable` escape hatch | **We may not invent a `siga/*` event type.** All durable and model-visible state rides known types — see below |
+| Remote execution | **`ssh`/`sftp`/`scp`/`slurm` do not exist anywhere in the harness** | Confirms layer 5 belongs in Python. Total grep over `packages/ apps/ docs/ examples/ python/` finds only `SSH_CONNECTION` env detection in a directory picker |
+| Network sandbox | **None.** `sandbox/src/index.ts:25`: *"Network and process visibility are outside this vocabulary."* No egress allowlist | HPC confinement cannot come from an OS sandbox. It comes from having no `hpc_run_shell` at all — fixed-function tools are the enforcement |
+| Env / config | `.env` loading is narrow: only `<cwd>/.env` and `$DSH_HOME/.env`, read-only, and it feeds the **credentials** domain | The harness will *not* read our `.env` for its own config. The MCP server receives settings through the `mcp-client` row's `env:` block (`!!js process.env.X`), or reads `.env` itself |
+| Out-of-tree client UI | The `clientBundle()` tsdown preset is **not published**; a bundle-purity gate rejects cross-plugin value imports | **Validates Option B.** Building the three Areas as in-GUI client plugins would fight unpublished packaging |
+| Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | **Validates Option B.** Area C's job card needs our own UI; the harness can only render `generic`/`terminal`/`diff`/`search`/`read`/`web` |
+| Host HTTP routes | `ctx.webServer.register({ kind: 'exact'\|'prefix', path, handler })` (`webserver/src/index.ts:59`) is the sanctioned out-of-tree route | Available if a host-half route is ever needed; our FastAPI app is independent of it |
 
 ## Build order (each step tested before the next)
 
