@@ -108,8 +108,15 @@ SIGA-LAMMPS/
 `adapter/memory/lammps_memory.md`, injected by `harness/siga-plugin` as:
 
 ```ts
-ctx.systemPrompt.section({ name: 'siga-lammps-memory', order: 150, text })
+ctx.systemPrompt.section({ name: 'siga-lammps-memory', order: 10, text })
 ```
+
+`order` follows the harness convention documented at
+`core/system-prompt/src/index.ts:53-75`: `-100` is harness identity, `0` the
+deployment persona, and `100–199` tool guidance. M is simulator grounding —
+domain vocabulary and structural rules — not tool guidance, so it belongs just
+after the persona and *before* the tool band. (An earlier draft of this document
+used `150`, which would have slotted the primer into the tool-guidance band.)
 
 Always-on, never a tool. Content per the brief: command ordering, units
 conventions, `atom_style`, lattice/region/create_box/create_atoms, read_data,
@@ -237,6 +244,25 @@ FastAPI backend that is a **thin, honest proxy** plus run management:
 feedback — never hidden chain-of-thought.** We forward only what the session log
 already makes durable: `tool/call`, `tool/result`, `agent/status`, and our own
 `siga/validation` and `siga/stop-gate` facts. Nothing is synthesized.
+
+## Implementation constraints confirmed against source
+
+Concrete API facts the plugin must respect. These were verified against the
+harness checkout, and the first two correct assumptions I had made.
+
+| Topic | Fact | Consequence for us |
+|---|---|---|
+| Exports | Harness plugins use **named exports, no default export** | `export const name`, `export const inject`, `export function apply(ctx)` |
+| Lifecycle | **`ctx.on('ready')` and `ctx.on('dispose')` do not exist** | Cleanup must go through `ctx.effect(fn, label?)` disposers, which Cordis unwinds on unload |
+| Plugin config | `Config` is a schemastery schema (`z.object({...})`) | Our plugin declares its validator path, block budget, and workspace root this way |
+| Prompt sections | No token budget or truncation inside `assemble()`; size pressure is `packages/compaction`'s job | M's size assertion in `tests/` is the only guard. Confirmed, not assumed. |
+| Tool args | `tools/pre-execute` **cannot rewrite arguments** — only `allow`/`deny`/`ask`. Args are excluded from rewriting *because they are already logged and presented* | Good for us: what the agent asked for is exactly what the audit log shows |
+| Tool results | `tools/post-execute` **can** replace content/value or `block` with feedback | Available if we ever need to redact a remote path from a result |
+| Turn control | `ToolRunContext` exposes `deferContext()` and `concludeTurn()` | `concludeTurn()` is the *inverse* of S — a tool ending the turn early. S deliberately does not use it. |
+| Approval | `ctx.approval.request({agent, toolName, callId?, reason?, signal?})`; policy `ask` \| `never`; fails **closed** to deny without an answerer | The right gate for HPC submission — a human click, not a silent upload |
+| Tool visibility | `ctx.tools.restrict({ allow?, deny? })` — scoped contexts only, throws on a global one | Keeps HPC tools out of presets that should not have them |
+| Whole-prompt transform | `system-prompt/assemble` waterfall exists | Not needed for M; `section()` is sufficient and less invasive |
+| Durable events | 18 packages already extend `SessionEventMap` by declaration merging | Our `siga/*` events are a supported pattern — with `ignorable: true` (audit G3) |
 
 ## Build order (each step tested before the next)
 
