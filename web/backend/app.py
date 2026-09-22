@@ -588,6 +588,12 @@ def _role_of(name: str) -> tuple[str, str, str]:
     return ("工具", name, "调用通用工具。")
 
 
+#: The plugin that owns the stop gate, and the one that injects runtime context.
+#: Distinct because both arrive as plugin-sourced user messages.
+STOP_GATE_PLUGIN = "siga-lammps"
+SYSTEM_PROMPT_PLUGIN = "@deepseek-ai/dsh-system-prompt"
+
+
 def _coerce_arguments(arguments: Any) -> dict[str, Any]:
     """Normalise a tool call's arguments to a mapping.
 
@@ -835,15 +841,29 @@ def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
             text = " ".join(
                 str(block.get("text", "")) for block in content if isinstance(block, dict)
             )
-        plugin = source.get("plugin")
+        plugin = str(source.get("plugin") or "")
+        # Only this adapter's own steer is the stop gate. The harness injects
+        # runtime context through the same plugin-sourced channel, and labelling
+        # that as an S interception would point a viewer at exactly the wrong
+        # moment — the one thing S's display exists to get right.
+        is_stop_gate = plugin == STOP_GATE_PLUGIN
+        is_environment = plugin == SYSTEM_PROMPT_PLUGIN or source.get("kind") == "system"
+        if is_stop_gate:
+            return {
+                "source": plugin,
+                "component": "S",
+                "label": "停止门控拦截",
+                "why": "agent 请求结束本轮，S 校验失败因此拒绝结束，并把结构化错误交回 agent 继续修复。",
+                "preview": text[:500],
+            }
+        if is_environment:
+            return {"source": plugin or "system", "component": "环境",
+                    "label": "注入运行时上下文", "preview": text[:220]}
         return {
             "source": plugin or source.get("kind") or "user",
-            "component": "S" if plugin else None,
-            "label": "停止门控拦截" if plugin else None,
-            "why": (
-                "agent 请求结束本轮，S 校验失败因此拒绝结束，并把结构化错误交回 agent 继续修复。"
-                if plugin else None
-            ),
+            "component": None,
+            "label": None,
+            "why": None,
             "preview": text[:500],
         }
     return {k: v for k, v in data.items() if k in {"turn", "step", "reason"}}

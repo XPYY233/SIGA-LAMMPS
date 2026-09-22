@@ -287,3 +287,33 @@ def test_progress_is_carried_as_turn_and_step() -> None:
     _relay(run, {"type": "tool/call", "seq": 3951, "data": {"turn": 3, "step": 7, "name": "bash"}})
     assert run.events[0]["turn"] == 3
     assert run.events[0]["step"] == 7
+
+
+def test_only_the_adapter_is_the_stop_gate() -> None:
+    """Runtime-context injection arrives on the same channel as an S steer.
+
+    Labelling it as an interception pointed a viewer at exactly the wrong
+    moment, which is the one thing S's display exists to get right.
+    """
+    context = _summarise(
+        "user/message",
+        {"source": {"kind": "plugin", "plugin": "@deepseek-ai/dsh-system-prompt"},
+         "content": [{"type": "text", "text": "Current runtime context. This snapshot…"}]},
+    )
+    assert context["component"] == "环境"
+    assert context["label"] == "注入运行时上下文"
+
+    gate = _summarise(
+        "user/message",
+        {"source": {"kind": "plugin", "plugin": "siga-lammps"},
+         "content": [{"type": "text", "text": "Stop-gate: validation failed"}]},
+    )
+    assert gate["component"] == "S"
+    assert gate["label"] == "停止门控拦截"
+
+
+def test_a_human_message_gets_no_component() -> None:
+    payload = _summarise(
+        "user/message", {"source": {"kind": "user"}, "content": [{"type": "text", "text": "hi"}]}
+    )
+    assert payload["component"] is None
