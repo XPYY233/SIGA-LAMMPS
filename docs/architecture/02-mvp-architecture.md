@@ -471,6 +471,36 @@ rather than merely confirming them.
 | Cancellation, per path | HTTP RPC exposes `session.cancel` (and `session.attachment`, `session.history`). The SDK's stdio protocol exposes **no** cancellation and no client→server notifications | Option B's web app speaks HTTP RPC, so the brief's "the user can cancel a job" is satisfiable. Had we driven everything through the SDK, it would not be. |
 | Headless CLI flags | `dsh --profile headless "task"` prints the final assistant text and exits 0/1. There is **no `--json` / `--print` flag** | Benchmark metrics come from the **session log**, not from CLI stdout. That is already how the evaluator is designed. |
 
+### Consequence of D1 (MCP tools) for long-running HPC work
+
+The harness has a good background-job facility — `ctx.jobs.start({ kind, label,
+owner, run })` returning `{ cancel, done, readOutput }`, plus `onJobDone` →
+`followup` to re-wake an idle agent within `maxConsecutiveWakes` (default 3).
+
+**Our tools cannot use it.** `ctx.jobs` is an in-process service; an MCP tool runs
+in the Python adapter, outside the harness. So an HPC tool call occupies the turn
+inline for its whole duration. Two facts make that acceptable rather than a
+problem, and one makes it a design constraint:
+
+- `hpc_submit_job` **returns as soon as `sbatch` does**, handing back a job id. It
+  never waits for the job. A tool call is therefore seconds, not hours.
+- `hpc_job_status` is a cheap poll that returns immediately.
+- **Nothing polls on the agent's behalf.** There is no scheduler that resumes a
+  job without a model-issued call, so progress requires the agent to poll or the
+  web app (Area C) to poll and display. The benchmark must not assume background
+  progress; it measures what the agent actually did.
+
+Two harness facts also bound what the benchmark may claim:
+
+- **`timeoutMs` is advisory, not a hard kill.** The timeout policy only notifies
+  via `AbortSignal`, and the registry documents that it "cannot hard-kill
+  same-process code". A benchmark cannot rely on a tool timeout to bound a
+  wedged call; the real bound is an explicit wall-clock budget in the evaluator
+  plus, for the MCP path, the client row's own `toolCallTimeoutMs`.
+- **No tool API extends a turn.** `ToolRunContext` offers only `deferContext()`
+  and `concludeTurn()`; `concludesTurn` exists on success only. This is the
+  inverse control S deliberately does not use.
+
 ## Build order (each step tested before the next)
 
 | Step | Module | Test gate |
