@@ -233,7 +233,7 @@ function repairInstruction(outcome: ValidatorOutcome, script: string, remaining:
   }
   lines.push(
     '',
-    'Fix the errors in the input script, then call validate_lammps_input to confirm.',
+    'Fix the errors in the input script, then call mcp__lammps__validate_lammps_input to confirm.',
     'If you believe a finding is wrong, say which one and why rather than working around it.',
     `You have ${remaining} more gate check(s) this turn before it is allowed to close.`,
   )

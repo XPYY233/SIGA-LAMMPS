@@ -120,8 +120,8 @@ def test_primer_gives_tool_usage_guidance(primer: str) -> None:
     than one with no retrieval layer at all.
     """
     lowered = primer.lower()
-    assert "search_lammps" in primer
-    assert "validate_lammps_input" in primer
+    assert "mcp__lammps__search_lammps" in primer
+    assert "mcp__lammps__validate_lammps_input" in primer
     # Guidance, not merely a mention: it must say when to call them.
     assert "before" in lowered
 
@@ -188,7 +188,7 @@ def test_primer_warns_about_the_timestep_default(primer: str) -> None:
 
 def test_primer_points_at_retrieval_for_details(primer: str) -> None:
     """M must not pretend to be the full reference; R covers syntax."""
-    assert "search_lammps" in primer
+    assert "mcp__lammps__search_lammps" in primer
 
 
 # --------------------------------------------------------------------------- #

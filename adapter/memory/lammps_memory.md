@@ -5,14 +5,14 @@
 LAMMPS reads a script top to bottom and executes each line as it goes, so
 ordering is a correctness property, not a style choice. This primer covers the
 rules you need on most tasks. It is deliberately not a reference: for the
-arguments of any command, call `search_lammps` — never guess a keyword.
+arguments of any command, call `mcp__lammps__search_lammps` — never guess a keyword.
 
 ## Tools
 
-- **`search_lammps(query)`** — authoritative syntax and worked examples. Call it
+- **`mcp__lammps__search_lammps(query)`** — authoritative syntax and worked examples. Call it
   before writing a command you are not certain of, and again when a validation
   error names something you do not recognise.
-- **`validate_lammps_input(...)`** — deterministic structural checks. Call it
+- **`mcp__lammps__validate_lammps_input(...)`** — deterministic structural checks. Call it
   **before** you consider the task finished, and fix what it reports.
 
 ## Command order
@@ -135,4 +135,4 @@ most common ways a script is structurally fine and still answers nothing:
 - [ ] the ensemble matches what was actually asked for
 - [ ] every requested observable is computed **and** written to output
 - [ ] the simulation does what the task asked, not merely something that runs
-- [ ] `validate_lammps_input` reports no errors
+- [ ] `mcp__lammps__validate_lammps_input` reports no errors
