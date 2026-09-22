@@ -1,0 +1,63 @@
+# ---- secrets (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+.credentials.yaml
+secrets.yaml
+config/local.yaml
+config/*.local.yaml
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- Node ----
+node_modules/
+dist/
+build/
+lib/
+*.tsbuildinfo
+
+# ---- generated artifacts (regenerable, kept out of git) ----
+# Runtime workspaces: generated LAMMPS inputs, logs, dump files.
+workspace/*
+!workspace/.gitkeep
+# Retrieval index is built from corpora by `make index`.
+adapter/retrieval/index/
+data/raw/
+data/index/
+
+# Benchmark run outputs (per-run artifacts are large; summaries are committed).
+benchmark/runs/*
+!benchmark/runs/.gitkeep
+
+# ---- LAMMPS run residue ----
+log.lammps
+log.*.lammps
+*.dump
+*.restart
+*.restart.*
+*.bin
+*.lammpstrj
+*.dat.tmp
+screen.*
+slurm-*.out
+slurm-*.err
+
+# ---- OS / editor ----
+.DS_Store
+.idea/
+.vscode/
+*.swp
