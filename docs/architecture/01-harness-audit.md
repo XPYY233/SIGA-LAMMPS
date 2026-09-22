@@ -285,12 +285,25 @@ separate as required by §5.
 | Harness home / live profile | `/Users/fanjunran/.dsh`; `web` on `127.0.0.1:3080` — **this session's own profile** |
 | Local LAMMPS | `/Users/fanjunran/.local/bin/lmp` — 22 Jul 2025 Update 4, Open MPI 5.0.9 ✅ |
 | HPC alias | `sy_hl_login` → `sylogin.hpc.sjtu.edu.cn`, user `fjr200630-1`, cert auth |
-| **HPC access right now** | ❌ **certificate expired 2026-09-17** (today: 2026-09-22) — needs renewal |
+| **HPC access** | ✅ **working** — cert renewed 2026-09-22 (valid to 2026-10-22). Smoke job **62865169** COMPLETED on `64c512g`, LAMMPS 22 Jul 2025 Update 4, exit 0:0 |
 
-The HPC finding does not block M/R/X/S or local LAMMPS work. It does mean the HPC
-layer must ship a preflight that distinguishes *auth failure* from other failures
-and reports it actionably, rather than retrying blindly. Since `BatchMode=yes`
-failed closed rather than hanging, that behaviour is already correct by default.
+The HPC path is now validated end to end by `tests/smoke/`: `sbatch` → module
+load → `lmp` → `log.lammps` collection, with the thermo table reproducing the
+local run exactly. Two constraints were discovered that the HPC layer must
+encode:
+
+- **`$SCRATCH` is a lie.** It is exported as
+  `/scratch/home/acct-Linlin00/fjr200630-1`, but `/scratch` exists on neither the
+  login node nor a compute node. The workspace root is therefore `$HOME` on
+  `/dssg`.
+- **`debug` is not submittable from this login node.** `sbatch` demands
+  submission from `pilogin.hpc.sjtu.edu.cn`, whose `~/.ssh/config` entry resolves
+  to a different user this certificate cannot authenticate as. `64c512g` starts
+  immediately and is the configured partition.
+
+Certificates on this cluster expire after roughly a month, so `hpc/preflight.py`
+must still distinguish *auth failure* from other failures and name the renewal as
+the remedy — the failure mode is routine here, not exceptional.
 
 ---
 
