@@ -64,6 +64,10 @@ class Run:
     task_id: str | None
     configuration: str
     workspace: Path
+    #: The researcher's own words. Without it a free-form run is indistinguishable
+    #: from every other free-form run, which makes the history unusable for
+    #: finding anything: the task id is empty and the folder name says nothing.
+    request: str = ""
     session_id: str | None = None
     created_at: float = field(default_factory=time.time)
     events: list[dict[str, Any]] = field(default_factory=list)
@@ -76,6 +80,7 @@ class Run:
             "task_id": self.task_id,
             "configuration": self.configuration,
             "workspace": str(self.workspace),
+            "request": self.request,
             "session_id": self.session_id,
             "created_at": self.created_at,
             "job": self.job,
@@ -159,6 +164,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
             task_id=payload.task_id,
             configuration=payload.configuration,
             workspace=workspace,
+            request=payload.request.strip(),
         )
         runs[run_id] = run
         _write_metadata(run)
@@ -252,6 +258,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         only the socket.
         """
         run = _require(runs, run_id, resolved)
+        await _backfill_events(run, harness)
 
         async def generate() -> AsyncIterator[bytes]:
             sent = 0
@@ -403,6 +410,7 @@ def _write_metadata(run: "Run") -> None:
                     "run_id": run.run_id,
                     "task_id": run.task_id,
                     "configuration": run.configuration,
+                    "request": run.request,
                     "session_id": run.session_id,
                     "created_at": run.created_at,
                     "job": run.job,
@@ -451,6 +459,7 @@ def _discover_runs(settings: Settings, known: dict[str, "Run"]) -> list["Run"]:
             Run(
                 run_id=path.name,
                 task_id=meta.get("task_id"),
+                request=str(meta.get("request") or ""),
                 configuration=str(meta.get("configuration") or "unknown"),
                 workspace=path,
                 created_at=float(meta.get("created_at") or path.stat().st_mtime),
@@ -505,18 +514,7 @@ async def _pump_events(run: Run, harness: HarnessClient) -> None:
             session_id = frame.payload.get("sessionId")
             if run.session_id and session_id and session_id != run.session_id:
                 continue
-            event = frame.payload.get("event") or {}
-            kind = str(event.get("type", ""))
-            if kind not in RELAYED_EVENTS:
-                continue
-            run.events.append(
-                {
-                    "seq": event.get("seq"),
-                    "type": kind,
-                    "at": event.get("time"),
-                    "data": _summarise(kind, event.get("data") or {}),
-                }
-            )
+            _relay(run, frame.payload.get("event") or {})
     except HarnessError as exc:
         run.events.append({"type": "stream/error", "data": {"detail": str(exc)}})
 
@@ -605,6 +603,49 @@ _FINDING_LABELS: dict[str, str] = {
     "TASK_REQUIRED_COMMAND_MISSING": "缺少任务必需的命令",
     "TASK_REQUIRED_PATTERN_MISSING": "缺少任务要求的写法",
 }
+
+
+def _relay(run: "Run", event: dict[str, Any]) -> bool:
+    """Append one durable event to a run's buffer, if Area B should show it.
+
+    Shared by the live pump and the history backfill so a restored run looks
+    exactly like a live one. Two code paths would drift, and the one that only
+    runs after a restart is the one nobody notices breaking.
+    """
+    kind = str(event.get("type", ""))
+    if kind not in RELAYED_EVENTS:
+        return False
+    run.events.append(
+        {
+            "seq": event.get("seq"),
+            "type": kind,
+            "at": event.get("time"),
+            "data": _summarise(kind, event.get("data") or {}),
+        }
+    )
+    return True
+
+
+async def _backfill_events(run: "Run", harness: HarnessClient) -> None:
+    """Populate a run's activity from its session history.
+
+    Runs discovered on disk have no live pump, so without this the console sat on
+    "正在加载该任务的活动流…" forever. The events were never lost — the session log
+    is durable and the harness can replay it — they simply had no reader.
+    """
+    if run.events or not run.session_id:
+        return
+    try:
+        payload = await harness.history(run.session_id, max_messages=400)
+    except (HarnessError, HarnessRpcError):
+        return
+    value = payload if isinstance(payload, dict) else {}
+    for entry in value.get("events") or []:
+        # `session.history` wraps each event, and the wrapper is the transport's
+        # shape rather than the event's, so unwrap before reading it.
+        event = entry.get("event") if isinstance(entry, dict) and "event" in entry else entry
+        if isinstance(event, dict):
+            _relay(run, event)
 
 
 def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:

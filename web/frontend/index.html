@@ -496,7 +496,13 @@ async function loadHistory() {
           esc(r.task_id || "自由描述") + " · " + esc(r.configuration) +
           (r.job && r.job.job_id ? " · 作业 " + esc(r.job.job_id) : "") +
           (r.error ? " · 失败" : "") +
-        "</div>";
+        "</div>" +
+        // The request itself, otherwise free-form runs are indistinguishable
+        // from one another and the history cannot be used to find anything.
+        (r.request
+          ? '<div class="sz" style="margin-top:2px;color:var(--fg-muted);white-space:normal">' +
+            esc(r.request.length > 90 ? r.request.slice(0, 90) + "…" : r.request) + "</div>"
+          : "");
       row.onclick = () => openRun(r.run_id);
       box.appendChild(row);
     }

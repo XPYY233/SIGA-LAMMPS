@@ -111,3 +111,96 @@ def test_reasoning_is_never_forwarded() -> None:
     """The brief forbids exposing hidden reasoning; only durable action is shown."""
     payload = _summarise("assistant/message", {"message": {"content": [{"type": "text", "text": "secret"}]}})
     assert "secret" not in json.dumps(payload)
+
+
+# --------------------------------------------------------------------------- #
+# run history
+# --------------------------------------------------------------------------- #
+
+
+def test_a_run_records_the_request_so_history_is_classifiable() -> None:
+    """Without the request text, free-form runs cannot be told apart.
+
+    The task id is empty for a free-form request and the folder name is opaque,
+    so a history list of them says nothing about what any of them was for.
+    """
+    from web.backend.app import Run
+
+    run = Run(
+        run_id="run-1", task_id=None, configuration="mrsx",
+        workspace=__import__("pathlib").Path("/tmp/x"),
+        request="把 LJ 晶体熔化并报告扩散系数",
+    )
+    assert run.to_dict()["request"] == "把 LJ 晶体熔化并报告扩散系数"
+
+
+def test_metadata_round_trips_the_request(tmp_path) -> None:
+    """The request must survive a restart, or history is classifiable only live."""
+    from web.backend.app import Run, _read_metadata, _write_metadata
+
+    run = Run(
+        run_id="run-2", task_id=None, configuration="mr", workspace=tmp_path,
+        request="equilibrate at 300K",
+    )
+    _write_metadata(run)
+    assert _read_metadata(tmp_path)["request"] == "equilibrate at 300K"
+
+
+def test_metadata_absent_or_corrupt_is_not_fatal(tmp_path) -> None:
+    """History discovery must not break because one file is unreadable."""
+    from web.backend.app import _read_metadata
+
+    assert _read_metadata(tmp_path) == {}
+    (tmp_path / "run.json").write_text("{not json", encoding="utf-8")
+    assert _read_metadata(tmp_path) == {}
+
+
+def test_history_events_are_backfilled_from_the_session() -> None:
+    """A run recovered from disk has no live pump, so it must be replayed.
+
+    Without this the console sat on '正在加载该任务的活动流…' forever. The events were
+    never lost — the session log is durable and replayable — they simply had no
+    reader for a run that was not created in this process.
+    """
+    import asyncio
+
+    from web.backend.app import Run, _backfill_events
+
+    class _StubHarness:
+        async def history(self, session_id, max_messages=400):
+            return {
+                "events": [
+                    {"event": {"type": "tool/call", "seq": 1,
+                               "data": {"name": "mcp__lammps__validate_lammps_input"}}},
+                    {"event": {"type": "assistant/chunk", "seq": 2, "data": {}}},
+                ]
+            }
+
+    run = Run(
+        run_id="run-3", task_id=None, configuration="mrsx",
+        workspace=__import__("pathlib").Path("/tmp/x"), session_id="session-1",
+    )
+    asyncio.run(_backfill_events(run, _StubHarness()))
+
+    # Only replayed event kinds reach Area B; assistant chunks never do.
+    assert len(run.events) == 1
+    assert run.events[0]["data"]["component"] == "X"
+
+
+def test_backfill_does_not_duplicate_existing_events() -> None:
+    """A live run already has its events; replaying must not double them."""
+    import asyncio
+
+    from web.backend.app import Run, _backfill_events
+
+    class _StubHarness:
+        async def history(self, session_id, max_messages=400):
+            raise AssertionError("must not be called for a run that already has events")
+
+    run = Run(
+        run_id="run-4", task_id=None, configuration="mrsx",
+        workspace=__import__("pathlib").Path("/tmp/x"), session_id="s",
+    )
+    run.events.append({"seq": 1, "type": "tool/call", "data": {}})
+    asyncio.run(_backfill_events(run, _StubHarness()))
+    assert len(run.events) == 1
