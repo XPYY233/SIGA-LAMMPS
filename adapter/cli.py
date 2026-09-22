@@ -146,6 +146,49 @@ def cmd_index_status(args: argparse.Namespace, settings: Settings) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def cmd_validate(args: argparse.Namespace, settings: Settings) -> int:
+    """X: validate a LAMMPS workspace.
+
+    The exit code is part of the contract, not a detail: a consumer must be able
+    to tell "the input is invalid" from "the validator could not run". The first
+    means block the agent; the second means alert a human. Collapsing them is how
+    a broken validator silently disables the stop gate and quietly turns an
+    M+R+X+S run into a vanilla one.
+    """
+    from adapter.tasks import load_task
+    from adapter.validator import validate_workspace
+
+    workspace = Path(args.workspace)
+    if not workspace.is_absolute():
+        workspace = (Path.cwd() / workspace).resolve()
+
+    task = None
+    if args.task:
+        task = load_task(args.task, settings.benchmark.tasks_dir)
+
+    try:
+        result = validate_workspace(
+            workspace,
+            task=task,
+            supported_atom_styles=settings.validator.supported_atom_styles,
+            supported_unit_styles=settings.validator.supported_unit_styles,
+            max_lines=settings.validator.max_lines,
+        )
+    except FileNotFoundError as exc:
+        # Nothing to validate is a run failure, not an invalid input.
+        raise CliError(str(exc)) from exc
+
+    if args.json:
+        _emit(result.to_dict(), as_json=True)
+    else:
+        print(result.render())
+        print(
+            f"\n{'VALID' if result.valid else 'INVALID'}: {len(result.errors)} error(s), "
+            f"{len(result.warnings)} warning(s), {len(result.suggestions)} note(s)"
+        )
+    return EXIT_OK if result.valid else EXIT_INVALID
+
+
 def _add_common_flags(parser: argparse.ArgumentParser, *, suppress: bool) -> None:
     """Add the options accepted both before and after a subcommand.
 
@@ -212,6 +255,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common_flags(status, suppress=True)
     status.add_argument("--persist-dir", default=None, help="override the index location")
     status.set_defaults(func=cmd_index_status)
+
+    validate = sub.add_parser("validate", help="X: validate a LAMMPS workspace")
+    _add_common_flags(validate, suppress=True)
+    validate.add_argument("workspace", help="directory holding the LAMMPS input script")
+    validate.add_argument("--task", default=None, help="benchmark task id to validate against")
+    validate.set_defaults(func=cmd_validate)
 
     return parser
 
