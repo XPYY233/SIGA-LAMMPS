@@ -223,13 +223,29 @@ class SlurmCeilings:
 
 @dataclass(frozen=True)
 class HpcSettings:
-    """Connection details for the cluster. Every value is config, not code."""
+    """Connection and submission details for the cluster.
+
+    Every value is deployment configuration, resolved from `.env`, and nothing
+    here is hardcoded. Submission parameters live here rather than being read
+    from the process environment at the point of use: an earlier version read
+    `os.environ` inside the HPC layer, which silently bypassed the loader and
+    made a correctly configured deployment report itself as unconfigured.
+    """
 
     host: str
     user: str | None
     port: int
     key_path: str | None
     workspace: str
+    #: SLURM partition. Required for any submission: guessing one would send work
+    #: somewhere nobody chose.
+    partition: str | None = None
+    #: `module load` argument for LAMMPS, when the cluster uses environment modules.
+    lammps_module: str | None = None
+    #: The executable to invoke inside the job script.
+    lammps_bin: str = "lmp"
+    #: SLURM account, when the cluster requires one.
+    account: str | None = None
 
     def __post_init__(self) -> None:
         if not self.host:
@@ -520,6 +536,10 @@ def load_settings(
             port=_env_int(env, "SIGA_HPC_PORT", 22) or 22,
             key_path=_expand(key) if (key := _env_str(env, "SIGA_HPC_KEY_PATH")) else None,
             workspace=_expand(workspace),
+            partition=_env_str(env, "SIGA_SLURM_PARTITION"),
+            lammps_module=_env_str(env, "SIGA_LAMMPS_MODULE"),
+            lammps_bin=_env_str(env, "SIGA_LAMMPS_BIN") or "lmp",
+            account=_env_str(env, "SIGA_SLURM_ACCOUNT"),
         )
     elif host or workspace:
         missing = "SIGA_HPC_WORKSPACE" if host else "SIGA_HPC_HOST"
