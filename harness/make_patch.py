@@ -211,6 +211,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--active-task", default=None, help="benchmark task id to bind for the agent")
     parser.add_argument("--port", type=int, default=3081, help="web server port")
     parser.add_argument(
+        "--patch-path",
+        default=None,
+        help="write the overlay here instead of harness/siga-patch.yml, so each "
+             "benchmark cell gets its own file",
+    )
+    parser.add_argument(
         "--mode",
         choices=("headless", "web"),
         default="headless",
@@ -240,8 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         print(content, end="")
         return 0
 
-    OUTPUT.write_text(content, encoding="utf-8")
-    print(f"wrote {OUTPUT}")
+    target = Path(args.patch_path) if args.patch_path else OUTPUT
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    print(f"wrote {target}")
     print(f"  plugin entry : {PLUGIN_ENTRY}")
     print(f"  mcp server   : python -m adapter.mcp_server  (cwd {REPO_ROOT})")
     print(f"  presets      : {', '.join(presets)}  (default {args.preset})")

@@ -298,67 +298,61 @@
         "rows": {
           "title": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": "Lennard-Jones simulation setup"
           },
           "goal": {
             "ver": 4,
-            "seq": 77009,
+            "seq": 98091,
             "val": null
           },
           "sessionStats": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "turns": 1,
-              "steps": 63,
-              "llmMs": 350025,
-              "toolMs": 130159,
-              "ttftMs": 44504,
-              "ttftSteps": 63,
-              "decodeMs": 305521,
-              "decodeTokens": 73798,
+              "steps": 80,
+              "llmMs": 475035,
+              "toolMs": 194348,
+              "ttftMs": 60413,
+              "ttftSteps": 80,
+              "decodeMs": 414622,
+              "decodeTokens": 100490,
               "lastTurn": 1,
-              "openStep": {
-                "turn": 1,
-                "step": 64,
-                "startTime": 1790091785013,
-                "firstTokenTime": 1790091785821
-              },
+              "openStep": null,
               "pendingCalls": {}
             }
           },
           "subagentTiming": {
             "ver": 2,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "descriptorSeen": false,
-              "settledMs": 0,
-              "pendingTurnStart": 1790091303753
+              "settledMs": 0
             }
           },
           "subagent": {
             "ver": 2,
-            "seq": 77009,
+            "seq": 98091,
             "val": {}
           },
           "tokenUsage": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "totals": {
-                "uncachedInputTokens": 33166,
-                "outputTokens": 73798,
-                "cacheReadTokens": 3585024,
+                "uncachedInputTokens": 39671,
+                "outputTokens": 100490,
+                "cacheReadTokens": 5614208,
                 "cacheWriteTokens": 0
               },
               "last": {
                 "turn": 1,
-                "step": 63,
+                "step": 80,
                 "buckets": {
-                  "uncachedInputTokens": 234,
-                  "outputTokens": 1855,
-                  "cacheReadTokens": 98048,
+                  "uncachedInputTokens": 166,
+                  "outputTokens": 713,
+                  "cacheReadTokens": 130688,
                   "cacheWriteTokens": 0
                 }
               }
@@ -366,26 +360,26 @@
           },
           "contextPressure": {
             "ver": 4,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
-              "surfaceTokens": 72852,
+              "surfaceTokens": 96388,
               "contextWindow": 1000000,
-              "pressureTokens": 98282,
-              "sampledSurfaceTokens": 71053
+              "pressureTokens": 130854,
+              "sampledSurfaceTokens": 95777
             }
           },
           "contextBreakdown": {
             "ver": 2,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "systemTokens": 1514,
               "toolsTokens": 6376,
-              "messageTokens": 72852
+              "messageTokens": 96388
             }
           },
           "permissions": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "preset": "danger-full-access",
               "sandbox": "danger-full-access",
@@ -394,7 +388,7 @@
           },
           "sessionListMetadata": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "blank": false,
               "lastPromptAt": 1790091303788
@@ -402,38 +396,38 @@
           },
           "imageLimits": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": null
           },
           "todos": {
             "ver": 2,
-            "seq": 77009,
+            "seq": 98091,
             "val": [
               {
                 "content": "Write the LAMMPS LJ input script (equilibration + production, RDF/MSD diagnostics)",
-                "status": "in_progress"
+                "status": "completed"
               },
               {
                 "content": "Run the simulation and confirm it completes cleanly",
-                "status": "pending"
+                "status": "completed"
               },
               {
                 "content": "Write analysis script (thermo, g(r), diffusion) with independent g(r) from the dump",
-                "status": "pending"
+                "status": "completed"
               },
               {
-                "content": "Validate results against known LJ literature values",
-                "status": "pending"
+                "content": "Validate: energy conservation, 3-route pressure, 2-route diffusion, analytic lattice sums, independent repeat",
+                "status": "completed"
               },
               {
                 "content": "Document the simulation and results in a README",
-                "status": "pending"
+                "status": "completed"
               }
             ]
           },
           "plan": {
             "ver": 1,
-            "seq": 77009,
+            "seq": 98091,
             "val": {
               "active": false,
               "wanted": null

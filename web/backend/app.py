@@ -521,15 +521,111 @@ async def _pump_events(run: Run, harness: HarnessClient) -> None:
         run.events.append({"type": "stream/error", "data": {"detail": str(exc)}})
 
 
+#: Which SIGA component a tool belongs to, and what it does.
+#:
+#: Named explicitly because the whole point of the adapter is that these are
+#: distinct mechanisms, and a researcher watching a run should be able to see
+#: which one acted. "Called a tool" is not informative; "X validated the script
+#: and found two ordering errors" is.
+_TOOL_ROLES: dict[str, tuple[str, str, str]] = {
+    "mcp__lammps__search_lammps": (
+        "R", "检索 LAMMPS 文档",
+        "在官方文档、示例脚本与命令参考中做语义检索，返回最相关的片段与出处。",
+    ),
+    "mcp__lammps__validate_lammps_input": (
+        "X", "确定性校验",
+        "逐条检查命令顺序、units、atom_style、结构初始化、力场、文件引用、ensemble、"
+        "timestep、run 与明显冲突，只报结构性结论，不判断物理对错。",
+    ),
+    "hpc_preflight": ("HPC", "超算连通性预检", "检查 SSH、远端工作区、SLURM 分区与资源上限。"),
+    "hpc_upload_workspace": ("HPC", "上传工作区", "把本地工作区传到远端 workspace 根目录下。"),
+    "hpc_submit_job": ("HPC", "提交作业", "渲染作业脚本并 sbatch，资源被夹紧到配置上限。"),
+    "hpc_job_status": ("HPC", "查询作业状态", "从 squeue 与 sacct 读取作业状态。"),
+    "hpc_read_log": ("HPC", "读取作业日志", "读取 log.lammps、SLURM stdout/stderr 或文件列表。"),
+    "hpc_cancel_job": ("HPC", "取消作业", "scancel 指定作业。"),
+    "bash": ("执行", "运行命令", "在会话工作区内执行 shell 命令。"),
+    "write": ("文件", "写入文件", "创建一个新文件。"),
+    "edit": ("文件", "修改文件", "对已有文件做定点替换。"),
+    "read": ("查看", "读取文件", "读取文件内容。"),
+    "glob": ("查看", "查找文件", "按文件名模式查找。"),
+    "grep": ("查看", "搜索内容", "在文件内容中做正则搜索。"),
+    "todo_write": ("规划", "更新任务清单", "记录并更新当前任务的待办状态。"),
+}
+
+
+def _role_of(name: str) -> tuple[str, str, str]:
+    """The component, label and explanation for a tool name."""
+    if name in _TOOL_ROLES:
+        return _TOOL_ROLES[name]
+    if name.startswith("mcp__lammps__"):
+        return ("Adapter", name.replace("mcp__lammps__", ""), "调用适配器工具。")
+    if name.startswith("mcp__"):
+        return ("MCP", name, "调用外部 MCP 工具。")
+    return ("工具", name, "调用通用工具。")
+
+
+def _argument_summary(name: str, arguments: Any) -> str:
+    """A one-line, human-readable summary of what a tool was asked to do.
+
+    The arguments are the difference between "called write()" and "wrote
+    in.melt". Without them a viewer cannot tell real work from spinning, which is
+    precisely the complaint this addresses.
+    """
+    if not isinstance(arguments, dict):
+        return ""
+    for key in ("command", "file_path", "path", "pattern", "query", "workspace", "message"):
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            text = " ".join(value.split())
+            return text[:220] + ("…" if len(text) > 220 else "")
+    for key, value in arguments.items():
+        if isinstance(value, str) and value.strip():
+            return f"{key}={value[:120]}"
+    return ""
+
+
+#: Plain-language explanation of what a validator finding means.
+_FINDING_LABELS: dict[str, str] = {
+    "UNITS_MISSING": "缺少 units 命令",
+    "UNITS_NOT_FIRST": "units 不在第一行",
+    "ATOM_STYLE_MISSING": "缺少 atom_style",
+    "STRUCTURE_NOT_INITIALISED": "系统从未被创建",
+    "PAIR_STYLE_MISSING": "缺少 pair_style",
+    "PAIR_COEFF_MISSING": "缺少 pair_coeff",
+    "ORDER_VIOLATION": "命令顺序错误",
+    "TIMESTEP_MISSING": "缺少 timestep（默认 0.0，动力学无意义）",
+    "TIMESTEP_NONPOSITIVE": "timestep 非正",
+    "TIMESTEP_TOO_LARGE": "timestep 对该单位制偏大",
+    "RUN_MISSING": "从未请求 run",
+    "CONFLICT_MULTIPLE_INTEGRATORS": "同一 group 上有多个积分器",
+    "CONFLICT_DEFORM_AND_BAROSTAT_SAME_AXIS": "deform 与恒压器控制同一轴",
+    "CONFLICT_READ_DATA_WITH_CONSTRUCTION": "read_data 与建盒命令混用",
+    "REFERENCED_FILE_MISSING": "引用的文件不存在",
+    "POTENTIAL_FILE_MISSING": "势函数文件不存在",
+    "TASK_REQUIRED_COMMAND_MISSING": "缺少任务必需的命令",
+    "TASK_REQUIRED_PATTERN_MISSING": "缺少任务要求的写法",
+}
+
+
 def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
     """Reduce a durable event to what Area B is allowed to show.
 
-    Tool calls and results are summarised rather than forwarded whole: a full
-    tool result can be enormous, and the brief asks for status and short action
-    summaries, not a transcript of everything the model saw.
+    Tool results are summarised rather than forwarded whole, and reasoning is
+    never included. What is added is enough context to tell real work from
+    apparent idling: which adapter component acted, what it was asked to do, and
+    what came back.
     """
     if kind == "tool/call":
-        return {"name": data.get("name"), "call_id": data.get("callId")}
+        name = str(data.get("name", ""))
+        component, label, why = _role_of(name)
+        return {
+            "name": name,
+            "call_id": data.get("callId"),
+            "component": component,
+            "label": label,
+            "why": why,
+            "args": _argument_summary(name, data.get("arguments")),
+        }
     if kind == "tool/result":
         content = data.get("content")
         text = ""
@@ -537,11 +633,29 @@ def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
             text = " ".join(
                 str(block.get("text", "")) for block in content if isinstance(block, dict)
             )
-        return {
+        payload: dict[str, Any] = {
             "call_id": data.get("callId"),
             "is_error": bool(data.get("isError")),
             "preview": text[:400],
         }
+        # A validator result is the most informative thing in the stream, so its
+        # findings are surfaced by name rather than left as raw JSON.
+        if '"valid"' in text:
+            try:
+                parsed = json.loads(text[text.index("{"):text.rindex("}") + 1])
+                counts = parsed.get("counts") or {}
+                payload["validation"] = {
+                    "valid": parsed.get("valid"),
+                    "errors": counts.get("errors", 0),
+                    "warnings": counts.get("warnings", 0),
+                    "codes": [
+                        _FINDING_LABELS.get(f.get("code"), f.get("code"))
+                        for f in (parsed.get("errors") or [])[:4]
+                    ],
+                }
+            except (ValueError, TypeError):
+                pass
+        return payload
     if kind == "agent/status":
         return {"status": data.get("status")}
     if kind == "user/message":
@@ -552,7 +666,17 @@ def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
             text = " ".join(
                 str(block.get("text", "")) for block in content if isinstance(block, dict)
             )
-        return {"source": source.get("plugin") or source.get("kind") or "user", "preview": text[:400]}
+        plugin = source.get("plugin")
+        return {
+            "source": plugin or source.get("kind") or "user",
+            "component": "S" if plugin else None,
+            "label": "停止门控拦截" if plugin else None,
+            "why": (
+                "agent 请求结束本轮，S 校验失败因此拒绝结束，并把结构化错误交回 agent 继续修复。"
+                if plugin else None
+            ),
+            "preview": text[:500],
+        }
     return {k: v for k, v in data.items() if k in {"turn", "step", "reason"}}
 
 

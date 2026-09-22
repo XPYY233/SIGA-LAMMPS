@@ -103,6 +103,27 @@
   .tag.err{color:var(--danger); border-color:rgba(248,81,73,.4)}
   .tag.ok{color:var(--success); border-color:rgba(63,185,80,.4)}
   .empty{color:var(--fg-subtle); font-size:12.5px; padding:14px 4px; text-align:center}
+  /* 组件徽章：让"哪个 SIGA 部件在起作用"一眼可见 */
+  .comp{font-size:10.5px; font-weight:700; border-radius:5px; padding:1px 6px;
+        border:1px solid var(--border); min-width:26px; text-align:center; display:inline-block}
+  .comp.M{color:var(--done); border-color:var(--done); background:rgba(163,113,247,.12)}
+  .comp.R{color:var(--accent); border-color:var(--accent); background:rgba(47,129,247,.12)}
+  .comp.X{color:var(--success); border-color:var(--success); background:rgba(63,185,80,.12)}
+  .comp.S{color:var(--attention); border-color:var(--attention); background:rgba(210,153,34,.14)}
+  .comp.HPC{color:#db6d28; border-color:#db6d28; background:rgba(219,109,40,.12)}
+  .ev .what{font-weight:500}
+  .ev .why{color:var(--fg-subtle); font-size:11.5px; margin-top:2px; line-height:1.5}
+  .ev .arg{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px;
+           background:var(--surface2); border:1px solid var(--border-muted); border-radius:4px;
+           padding:2px 6px; margin-top:4px; display:block; white-space:pre-wrap;
+           word-break:break-all; max-height:88px; overflow:auto}
+  .vsum{margin-top:4px; font-size:11.5px}
+  .vsum .ok{color:var(--success)} .vsum .bad{color:var(--danger)}
+  .ev.gate{box-shadow:inset 3px 0 0 var(--attention)}
+  #runhead{font-size:12px; color:var(--fg-muted); border:1px solid var(--border);
+           border-radius:6px; padding:7px 10px; background:var(--surface); margin-bottom:8px;
+           line-height:1.6}
+  #runhead .on{color:var(--fg)}
   .status-line{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
                font-size:12.5px; color:var(--fg-muted)}
   .pill{font-size:11.5px; border-radius:999px; padding:1px 9px;
@@ -181,7 +202,15 @@
 
   <section>
     <h2>B<span class="zh">Agent 活动</span></h2>
-    <div class="hint" style="margin-bottom:8px">展示工具调用、状态变化与验证反馈，不展示隐藏推理过程。</div>
+    <div id="runhead">选择配置并生成任务后，这里会显示 agent 每一步在做什么、由哪个适配器部件驱动。<br>
+      不展示隐藏推理过程。</div>
+    <div class="hint" style="margin-bottom:8px">
+      <span class="comp R" style="margin-right:4px">R</span>检索　
+      <span class="comp X" style="margin-right:4px">X</span>校验　
+      <span class="comp S" style="margin-right:4px">S</span>停止门控　
+      <span class="comp HPC" style="margin-right:4px">HPC</span>超算　
+      <span class="comp M">M</span>常驻记忆
+    </div>
     <div id="activity"><div class="empty">等待任务开始…</div></div>
   </section>
 
@@ -213,27 +242,39 @@ const bytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + "
 
 function label(ev) {
   const d = ev.data || {};
-  switch (ev.type) {
-    case "tool/call":   return { cls:"tool", tag:"工具", text:"调用 " + (d.name || "?") + "()" };
-    case "tool/result": return { cls: d.is_error ? "err" : "ok",
-                                 tag: d.is_error ? "工具错误" : "工具返回",
-                                 text: (d.preview || "").slice(0,300) || "(无输出)" };
-    case "agent/status":return { cls:"sys", tag:"状态", text: d.status === "running" ? "运行中" : "空闲" };
-    case "user/message": {
-      if (d.source === "@deepseek-ai/dsh-system-prompt")
-        return { cls:"sys", tag:"环境", text:(d.preview || "").slice(0,200) };
-      const gate = d.source && d.source !== "user";
-      return gate
-        ? { cls:"gate", tag:"停止门控 S", text:"S 拦截了本轮结束，要求 agent 返工：\n" + (d.preview || "").slice(0,400) }
-        : { cls:"", tag:"科研人员", text:(d.preview || "").slice(0,400) };
-    }
-    case "step/start":  return { cls:"sys", tag:"步骤", text:"开始第 " + (d.step ?? "?") + " 步" };
-    case "step/end":    return { cls:"sys", tag:"步骤", text:"第 " + (d.step ?? "?") + " 步结束" };
-    case "turn/start":  return { cls:"sys", tag:"轮次", text:"开始第 " + (d.turn ?? "?") + " 轮" };
-    case "turn/end":    return { cls:"sys", tag:"轮次", text:"第 " + (d.turn ?? "?") + " 轮结束" };
-    case "stream/error":return { cls:"err", tag:"错误", text: d.detail || "事件流异常" };
-    default:            return { cls:"sys", tag:ev.type, text: JSON.stringify(d).slice(0,160) };
+  if (ev.type === "tool/call") {
+    return { cls:"tool", comp:d.component || "工具", what:d.label || d.name,
+             why:d.why || "", arg:d.args || "" };
   }
+  if (ev.type === "tool/result") {
+    const v = d.validation;
+    if (v) {
+      const verdict = v.valid ? '<span class="ok">通过</span>'
+                              : '<span class="bad">未通过 · ' + v.errors + " 个错误</span>";
+      return { cls: v.valid ? "ok" : "err", comp:"X", what:"校验结果：" + verdict,
+               why: v.codes && v.codes.length ? "问题：" + v.codes.join("、") : "",
+               html: true };
+    }
+    return { cls: d.is_error ? "err" : "ok", comp:"工具",
+             what: d.is_error ? "工具报错" : "工具返回",
+             arg: (d.preview || "").slice(0, 260) || "(无输出)" };
+  }
+  if (ev.type === "user/message") {
+    if (d.source === "@deepseek-ai/dsh-system-prompt")
+      return { cls:"sys", comp:"环境", what:"注入运行时上下文", arg:(d.preview || "").slice(0,180) };
+    if (d.component === "S")
+      return { cls:"gate", comp:"S", what:"S 拦截了本轮结束",
+               why: d.why || "", arg:(d.preview || "").slice(0,420) };
+    return { cls:"", comp:"你", what:"下达需求", arg:(d.preview || "").slice(0,420) };
+  }
+  if (ev.type === "step/start") return { cls:"sys", comp:"·", what:"开始第 " + (d.step ?? "?") + " 步" };
+  if (ev.type === "step/end")   return { cls:"sys", comp:"·", what:"第 " + (d.step ?? "?") + " 步结束" };
+  if (ev.type === "turn/start") return { cls:"sys", comp:"·", what:"开始第 " + (d.turn ?? "?") + " 轮" };
+  if (ev.type === "turn/end")   return { cls:"sys", comp:"·", what:"第 " + (d.turn ?? "?") + " 轮结束" };
+  if (ev.type === "agent/status")
+    return { cls:"sys", comp:"·", what: d.status === "running" ? "agent 运行中" : "agent 空闲" };
+  if (ev.type === "stream/error") return { cls:"err", comp:"!", what:"错误", arg:d.detail || "" };
+  return { cls:"sys", comp:"·", what: ev.type, arg: JSON.stringify(d).slice(0,140) };
 }
 function addEvent(ev) {
   const box = $("activity");
@@ -241,10 +282,17 @@ function addEvent(ev) {
   const L = label(ev);
   const el = document.createElement("div");
   el.className = "ev " + L.cls;
-  el.innerHTML = '<div class="meta"><span class="tag ' + L.cls + '">' + esc(L.tag) +
-                 '</span><span>' + esc(ev.seq != null ? "#" + ev.seq : "") + '</span></div>' +
-                 '<div class="body">' + esc(L.text) + '</div>';
-  box.appendChild(el); box.scrollTop = box.scrollHeight;
+  let html = '<div class="meta">' +
+             '<span class="comp ' + esc(L.comp) + '">' + esc(L.comp) + "</span>" +
+             '<span class="what">' + esc(L.what) + "</span>" +
+             (ev.seq != null ? '<span style="margin-left:auto">#' + ev.seq + "</span>" : "") +
+             "</div>";
+  if (L.why) html += '<div class="why">' + esc(L.why) + "</div>";
+  if (L.arg && !L.html) html += '<span class="arg">' + esc(L.arg) + "</span>";
+  if (L.html) html += '<div class="vsum">' + L.why.replace(/&lt;span class="ok"&gt;/g,"") + "</div>";
+  el.innerHTML = html;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
 }
 async function api(path, opts = {}) {
   const res = await fetch(path, opts);
@@ -326,6 +374,16 @@ $("generate").onclick = async () => {
     });
     currentRun = run.run.run_id;
     $("runinfo").textContent = "任务 " + currentRun + " · 配置 " + run.run.configuration;
+    const cfg = run.run.configuration;
+    const has = (c) => cfg.includes(c);
+    $("runhead").innerHTML =
+      "配置 <b>" + esc(cfg) + "</b> ｜ " +
+      (cfg === "vanilla"
+        ? "未挂载任何适配器部件，这是能力基线"
+        : [has("m") ? '<span class="on">M 常驻记忆</span>' : "", has("r") ? '<span class="on">R 检索</span>' : "",
+           has("r") ? '<span class="on">X 校验</span>' : "", cfg === "mrsx" ? '<span class="on">S 停止门控</span>' : ""]
+          .filter(Boolean).join(" + ") + " 已挂载") +
+      '<br>下方每次工具调用都标出由哪个部件驱动、做了什么。';
     if (run.run.error) addEvent({ type:"stream/error", data:{ detail: run.run.error } });
     const files = $("files").files;
     if (files.length) {
