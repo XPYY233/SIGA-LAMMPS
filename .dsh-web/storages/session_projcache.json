@@ -561,6 +561,133 @@
             }
           }
         }
+      },
+      "session-31cb2ab8-6706-418f-86eb-ed4930aa36b3": {
+        "identity": {
+          "createdAt": 1790093471298,
+          "cwd": "/Users/fanjunran/SIGA-LAMMPS/workspace/run-2d955be91b"
+        },
+        "rows": {
+          "title": {
+            "ver": 1,
+            "seq": 5540,
+            "val": "W单质150keV位移级联模拟"
+          },
+          "goal": {
+            "ver": 4,
+            "seq": 5540,
+            "val": null
+          },
+          "sessionStats": {
+            "ver": 1,
+            "seq": 5540,
+            "val": {
+              "turns": 1,
+              "steps": 4,
+              "llmMs": 30030,
+              "toolMs": 4337,
+              "ttftMs": 2949,
+              "ttftSteps": 5,
+              "decodeMs": 27081,
+              "decodeTokens": 5739,
+              "lastTurn": 1,
+              "openStep": null,
+              "pendingCalls": {
+                "call_01_HAyziKBH8pqbJgYXJAa02197": 1790093506072
+              }
+            }
+          },
+          "subagentTiming": {
+            "ver": 2,
+            "seq": 5540,
+            "val": {
+              "descriptorSeen": false,
+              "settledMs": 0,
+              "pendingTurnStart": 1790093471584
+            }
+          },
+          "subagent": {
+            "ver": 2,
+            "seq": 5540,
+            "val": {}
+          },
+          "tokenUsage": {
+            "ver": 1,
+            "seq": 5540,
+            "val": {
+              "totals": {
+                "uncachedInputTokens": 12287,
+                "outputTokens": 5739,
+                "cacheReadTokens": 50816,
+                "cacheWriteTokens": 0
+              },
+              "last": {
+                "turn": 1,
+                "step": 5,
+                "buckets": {
+                  "uncachedInputTokens": 535,
+                  "outputTokens": 1629,
+                  "cacheReadTokens": 15616,
+                  "cacheWriteTokens": 0
+                }
+              }
+            }
+          },
+          "contextPressure": {
+            "ver": 4,
+            "seq": 5540,
+            "val": {
+              "surfaceTokens": 7694,
+              "contextWindow": 1000000,
+              "pressureTokens": 16151,
+              "sampledSurfaceTokens": 6296
+            }
+          },
+          "contextBreakdown": {
+            "ver": 2,
+            "seq": 5540,
+            "val": {
+              "systemTokens": 1514,
+              "toolsTokens": 6376,
+              "messageTokens": 7694
+            }
+          },
+          "permissions": {
+            "ver": 1,
+            "seq": 5540,
+            "val": {
+              "preset": "danger-full-access",
+              "sandbox": "danger-full-access",
+              "approval": "never"
+            }
+          },
+          "sessionListMetadata": {
+            "ver": 1,
+            "seq": 5540,
+            "val": {
+              "blank": false,
+              "lastPromptAt": 1790093471641
+            }
+          },
+          "imageLimits": {
+            "ver": 1,
+            "seq": 5540,
+            "val": null
+          },
+          "todos": {
+            "ver": 2,
+            "seq": 5540,
+            "val": null
+          },
+          "plan": {
+            "ver": 1,
+            "seq": 5540,
+            "val": {
+              "active": false,
+              "wanted": null
+            }
+          }
+        }
       }
     }
   }

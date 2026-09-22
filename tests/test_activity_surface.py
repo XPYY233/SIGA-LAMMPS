@@ -204,3 +204,86 @@ def test_backfill_does_not_duplicate_existing_events() -> None:
     run.events.append({"seq": 1, "type": "tool/call", "data": {}})
     asyncio.run(_backfill_events(run, _StubHarness()))
     assert len(run.events) == 1
+
+
+# --------------------------------------------------------------------------- #
+# the shapes the harness actually emits
+# --------------------------------------------------------------------------- #
+#
+# Every case below uses a verbatim event body captured from a real session log.
+# The earlier code assumed `arguments` was a mapping and that result text lived
+# at `data["content"]`; both assumptions were wrong, and the surface silently
+# degraded to "运行命令" with no command and "(无输出)" for every result. Testing
+# against invented shapes would not have caught either.
+
+
+def test_arguments_arrive_as_a_json_string() -> None:
+    """The event log stores the wire form, which is a string, not a mapping."""
+    payload = _summarise(
+        "tool/call",
+        {
+            "turn": 1, "step": 1, "callId": "c",
+            "name": "bash",
+            "arguments": '{"command": "pwd; ls -la", "description": "List workspace contents"}',
+        },
+    )
+    assert payload["args"] == "pwd; ls -la", payload
+
+
+def test_a_malformed_argument_string_does_not_crash_the_feed() -> None:
+    payload = _summarise(
+        "tool/call", {"name": "bash", "arguments": "{not json"}
+    )
+    assert payload["component"] == "执行"
+    assert "not json" in payload["args"]
+
+
+def test_result_text_is_nested_inside_the_tool_result_block() -> None:
+    """Text sits at message.content[].content[].text — one level deeper."""
+    payload = _summarise(
+        "tool/result",
+        {
+            "turn": 1, "step": 1,
+            "message": {
+                "source": {"kind": "tool", "callId": "c"},
+                "content": [{
+                    "type": "tool-result",
+                    "toolCallId": "c",
+                    "isError": False,
+                    "content": [{"type": "text", "text": "Step Temp E_pair\n0 1.2 -6.77"}],
+                }],
+            },
+        },
+    )
+    assert "Step Temp" in payload["preview"]
+    assert payload["is_error"] is False
+
+
+def test_a_real_validator_result_is_still_decoded_by_name() -> None:
+    """The validator path must keep working with the nested shape."""
+    inner = json.dumps({
+        "valid": False,
+        "errors": [{"code": "UNITS_MISSING", "message": "no units"}],
+        "counts": {"errors": 1, "warnings": 0, "suggestions": 0},
+    })
+    payload = _summarise(
+        "tool/result",
+        {"message": {"content": [{"type": "tool-result", "content": [{"type": "text", "text": inner}]}]}},
+    )
+    assert payload["validation"]["errors"] == 1
+    assert "缺少 units 命令" in payload["validation"]["codes"]
+
+
+def test_progress_is_carried_as_turn_and_step() -> None:
+    """A viewer needs to know how far along a run is, which seq does not say."""
+    import asyncio
+
+    from web.backend.app import Run, _relay
+
+    run = Run(
+        run_id="r", task_id=None, configuration="mrsx",
+        workspace=__import__("pathlib").Path("/tmp/x"),
+    )
+    _relay(run, {"type": "tool/call", "seq": 3951, "data": {"turn": 3, "step": 7, "name": "bash"}})
+    assert run.events[0]["turn"] == 3
+    assert run.events[0]["step"] == 7

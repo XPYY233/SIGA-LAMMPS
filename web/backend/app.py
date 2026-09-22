@@ -562,14 +562,34 @@ def _role_of(name: str) -> tuple[str, str, str]:
     return ("工具", name, "调用通用工具。")
 
 
+def _coerce_arguments(arguments: Any) -> dict[str, Any]:
+    """Normalise a tool call's arguments to a mapping.
+
+    They arrive as a JSON *string*, not a mapping, because the event log stores
+    the wire form. An isinstance check against dict therefore silently produced
+    no summary at all, which is exactly the failure this whole surface exists to
+    prevent: the console showed "运行命令" with no command.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str) and arguments.strip():
+        try:
+            parsed = json.loads(arguments)
+        except ValueError:
+            return {"_raw": arguments}
+        return parsed if isinstance(parsed, dict) else {"_raw": parsed}
+    return {}
+
+
 def _argument_summary(name: str, arguments: Any) -> str:
     """A one-line, human-readable summary of what a tool was asked to do.
 
     The arguments are the difference between "called write()" and "wrote
-    in.melt". Without them a viewer cannot tell real work from spinning, which is
-    precisely the complaint this addresses.
+    in.melt", and between "ran a command" and "ran lmp -in in.melt". Without them
+    a viewer cannot tell real work from spinning.
     """
-    if not isinstance(arguments, dict):
+    arguments = _coerce_arguments(arguments)
+    if not arguments:
         return ""
     for key in ("command", "file_path", "path", "pattern", "query", "workspace", "message"):
         value = arguments.get(key)
@@ -620,6 +640,8 @@ def _relay(run: "Run", event: dict[str, Any]) -> bool:
             "seq": event.get("seq"),
             "type": kind,
             "at": event.get("time"),
+            "turn": event.get("data", {}).get("turn"),
+            "step": event.get("data", {}).get("step"),
             "data": _summarise(kind, event.get("data") or {}),
         }
     )
@@ -648,6 +670,34 @@ async def _backfill_events(run: "Run", harness: HarnessClient) -> None:
             _relay(run, event)
 
 
+def _result_text(data: dict[str, Any]) -> str:
+    """Flatten a tool result to plain text.
+
+    The text sits at ``message.content[].content[].text`` — a tool result block
+    carries its own content list. Reading ``data["content"]`` found nothing and
+    rendered every result as "(无输出)", which made a busy run look idle.
+    """
+    parts: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, str):
+            return
+        if isinstance(node, list):
+            for item in node:
+                walk(item)
+            return
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get("text"), str):
+            parts.append(node["text"])
+        for key in ("content", "message"):
+            if key in node:
+                walk(node[key])
+
+    walk(data.get("message") if "message" in data else data)
+    return "\n".join(part for part in parts if part).strip()
+
+
 def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
     """Reduce a durable event to what Area B is allowed to show.
 
@@ -668,12 +718,7 @@ def _summarise(kind: str, data: dict[str, Any]) -> dict[str, Any]:
             "args": _argument_summary(name, data.get("arguments")),
         }
     if kind == "tool/result":
-        content = data.get("content")
-        text = ""
-        if isinstance(content, list):
-            text = " ".join(
-                str(block.get("text", "")) for block in content if isinstance(block, dict)
-            )
+        text = _result_text(data)
         payload: dict[str, Any] = {
             "call_id": data.get("callId"),
             "is_error": bool(data.get("isError")),

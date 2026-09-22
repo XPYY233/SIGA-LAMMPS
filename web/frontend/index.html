@@ -257,7 +257,8 @@ function label(ev) {
     }
     return { cls: d.is_error ? "err" : "ok", comp:"工具",
              what: d.is_error ? "工具报错" : "工具返回",
-             arg: (d.preview || "").slice(0, 260) || "(无输出)" };
+             arg: (d.preview || "").slice(0, 400) ||
+                  (d.is_error ? "（工具报错，无文本内容）" : "（无文本输出）") };
   }
   if (ev.type === "user/message") {
     if (d.source === "@deepseek-ai/dsh-system-prompt")
@@ -282,10 +283,14 @@ function addEvent(ev) {
   const L = label(ev);
   const el = document.createElement("div");
   el.className = "ev " + L.cls;
+  // Progress is turn/step, not the session seq: #3951 tells a viewer nothing
+  // about how far along the run is, while "第 3 步" does.
+  const progress = (ev.turn != null && ev.step != null)
+    ? "第 " + ev.turn + " 轮 · 第 " + ev.step + " 步" : "";
   let html = '<div class="meta">' +
              '<span class="comp ' + esc(L.comp) + '">' + esc(L.comp) + "</span>" +
              '<span class="what">' + esc(L.what) + "</span>" +
-             (ev.seq != null ? '<span style="margin-left:auto">#' + ev.seq + "</span>" : "") +
+             (progress ? '<span style="margin-left:auto">' + esc(progress) + "</span>" : "") +
              "</div>";
   if (L.why) html += '<div class="why">' + esc(L.why) + "</div>";
   if (L.arg && !L.html) html += '<span class="arg">' + esc(L.arg) + "</span>";
