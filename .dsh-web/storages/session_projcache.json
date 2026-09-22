@@ -1,0 +1,138 @@
+{
+  "unit": {
+    "name": "session_projcache",
+    "version": 3
+  },
+  "global": null,
+  "tables": {
+    "sessions": {
+      "session-3a1cac09-f278-484c-a6d3-1be95871cb9c": {
+        "identity": {
+          "createdAt": 1790090871493,
+          "cwd": "/Users/fanjunran/SIGA-LAMMPS/workspace/run-fcaf236b25"
+        },
+        "rows": {
+          "title": {
+            "ver": 1,
+            "seq": 397,
+            "val": "Lennard-Jones crystal melting simulation"
+          },
+          "goal": {
+            "ver": 4,
+            "seq": 397,
+            "val": null
+          },
+          "sessionStats": {
+            "ver": 1,
+            "seq": 397,
+            "val": {
+              "turns": 1,
+              "steps": 1,
+              "llmMs": 2088,
+              "toolMs": 46,
+              "ttftMs": 767,
+              "ttftSteps": 2,
+              "decodeMs": 1321,
+              "decodeTokens": 464,
+              "lastTurn": 1,
+              "openStep": null,
+              "pendingCalls": {
+                "call_00_Qio4MgG4FILTZzyj2rwq8054": 1790090874059
+              }
+            }
+          },
+          "subagentTiming": {
+            "ver": 2,
+            "seq": 397,
+            "val": {
+              "descriptorSeen": false,
+              "settledMs": 0,
+              "pendingTurnStart": 1790090871829
+            }
+          },
+          "subagent": {
+            "ver": 2,
+            "seq": 397,
+            "val": {}
+          },
+          "tokenUsage": {
+            "ver": 1,
+            "seq": 397,
+            "val": {
+              "totals": {
+                "uncachedInputTokens": 10712,
+                "outputTokens": 464,
+                "cacheReadTokens": 10624,
+                "cacheWriteTokens": 0
+              },
+              "last": {
+                "turn": 1,
+                "step": 2,
+                "buckets": {
+                  "uncachedInputTokens": 235,
+                  "outputTokens": 292,
+                  "cacheReadTokens": 10624,
+                  "cacheWriteTokens": 0
+                }
+              }
+            }
+          },
+          "contextPressure": {
+            "ver": 4,
+            "seq": 397,
+            "val": {
+              "surfaceTokens": 2528,
+              "contextWindow": 1000000,
+              "pressureTokens": 10859,
+              "sampledSurfaceTokens": 2276
+            }
+          },
+          "contextBreakdown": {
+            "ver": 2,
+            "seq": 397,
+            "val": {
+              "systemTokens": 1514,
+              "toolsTokens": 6376,
+              "messageTokens": 2528
+            }
+          },
+          "permissions": {
+            "ver": 1,
+            "seq": 397,
+            "val": {
+              "preset": "workspace-write",
+              "sandbox": "workspace-write",
+              "approval": "ask"
+            }
+          },
+          "sessionListMetadata": {
+            "ver": 1,
+            "seq": 397,
+            "val": {
+              "blank": false,
+              "lastPromptAt": 1790090871909
+            }
+          },
+          "imageLimits": {
+            "ver": 1,
+            "seq": 397,
+            "val": null
+          },
+          "todos": {
+            "ver": 2,
+            "seq": 397,
+            "val": null
+          },
+          "plan": {
+            "ver": 1,
+            "seq": 397,
+            "val": {
+              "active": false,
+              "wanted": null
+            }
+          }
+        }
+      }
+    }
+  }
+}

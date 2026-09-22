@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIGA-LAMMPS</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --fg:#e6e8ec; --dim:#8b93a3;
+          --ok:#3fb950; --warn:#d29922; --err:#f85149; --accent:#5b9dff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); display:flex;
+           align-items:center; gap:14px; }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .status { font-size:12px; color:var(--dim); margin-left:auto; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+         background:var(--dim); margin-right:6px; vertical-align:middle; }
+  .dot.ok { background:var(--ok); } .dot.bad { background:var(--err); }
+  main { display:grid; grid-template-columns:1.05fr 1.25fr 1.1fr; gap:1px;
+         background:var(--line); min-height:calc(100vh - 53px); }
+  section { background:var(--bg); padding:16px 18px; display:flex; flex-direction:column;
+            min-width:0; }
+  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.8px; color:var(--dim);
+       margin:0 0 10px; font-weight:600; }
+  textarea,input,select,button { font:inherit; color:var(--fg); background:var(--panel);
+       border:1px solid var(--line); border-radius:6px; padding:8px 10px; width:100%; }
+  textarea { min-height:110px; resize:vertical; }
+  button { background:var(--accent); border-color:var(--accent); color:#06101f;
+           font-weight:600; cursor:pointer; width:auto; padding:8px 16px; }
+  button.ghost { background:transparent; color:var(--fg); border-color:var(--line);
+                 font-weight:500; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .row { display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  label.field { display:block; margin:11px 0 4px; font-size:12px; color:var(--dim); }
+  pre { background:var(--panel); border:1px solid var(--line); border-radius:6px;
+        padding:10px; overflow:auto; font-size:12px; margin:0;
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  #activity { flex:1 1 auto; overflow:auto; display:flex; flex-direction:column;
+              gap:5px; min-height:280px; max-height:62vh; }
+  .ev { border-left:2px solid var(--line); padding:3px 0 3px 10px; font-size:12.5px; }
+  .ev.tool { border-color:var(--accent); } .ev.err { border-color:var(--err); }
+  .ev.gate { border-color:var(--warn); }
+  .ev .k { color:var(--dim); font-size:11px; }
+  .muted { color:var(--dim); font-size:12px; }
+  .files { max-height:170px; overflow:auto; font-size:12px; margin-top:6px; }
+  .files div { padding:2px 0; cursor:pointer; }
+  .files div:hover { color:var(--accent); }
+  .pill { display:inline-block; padding:1px 8px; border-radius:10px; font-size:11px;
+          border:1px solid var(--line); color:var(--dim); }
+  .pill.ok { color:var(--ok); border-color:var(--ok); }
+  .pill.err { color:var(--err); border-color:var(--err); }
+  .pill.warn { color:var(--warn); border-color:var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SIGA-LAMMPS</h1>
+  <span class="pill">M &middot; R &middot; X &middot; S</span>
+  <span class="status"><span id="hdot" class="dot"></span><span id="htxt">checking harness&hellip;</span></span>
+</header>
+<main>
+  <section>
+    <h2>A &middot; Simulation Request</h2>
+    <textarea id="request" placeholder="Describe the LAMMPS simulation you want, e.g. Simulate the melting of a 3D Lennard-Jones crystal at reduced density 0.8442 and temperature 1.2"></textarea>
+    <label class="field" for="task">Benchmark task (optional &mdash; freezes the specification)</label>
+    <select id="task">
+      <option value="">none &mdash; use my wording</option>
+      <option value="lj_melt">lj_melt &middot; Lennard-Jones melting</option>
+      <option value="nvt_equilibration">nvt_equilibration &middot; NVT equilibration</option>
+      <option value="msd_diffusion">msd_diffusion &middot; MSD diffusion</option>
+      <option value="uniaxial_tension">uniaxial_tension &middot; uniaxial tension</option>
+      <option value="nanoindentation">nanoindentation &middot; nanoindentation</option>
+    </select>
+    <label class="field" for="config">Adapter configuration</label>
+    <select id="config">
+      <option value="vanilla">vanilla &mdash; no adapter</option>
+      <option value="m">M &mdash; procedural memory</option>
+      <option value="mr">M+R &mdash; memory and retrieval</option>
+      <option value="mrsx" selected>M+R+X+S &mdash; full adapter</option>
+    </select>
+    <label class="field" for="files">Attach structure / data / potential files</label>
+    <input id="files" type="file" multiple>
+    <div class="row">
+      <button id="generate">Generate simulation</button>
+      <button id="followup" class="ghost" disabled>Send follow-up</button>
+    </div>
+    <div class="row"><span id="runinfo" class="muted">no run yet</span></div>
+  </section>
+  <section>
+    <h2>B &middot; Agent Activity</h2>
+    <div class="muted">Tool calls, statuses and validator feedback. Reasoning is not shown.</div>
+    <div id="activity"></div>
+  </section>
+  <section>
+    <h2>C &middot; Simulation Job</h2>
+    <div id="jobbox" class="muted">not submitted</div>
+    <div class="row">
+      <button id="submit" class="ghost" disabled>Validate &amp; submit to HPC</button>
+      <button id="cancel" class="ghost" disabled>Cancel</button>
+    </div>
+    <h2 style="margin-top:16px">Generated files</h2>
+    <div id="files-list" class="files muted">none</div>
+    <h2 style="margin-top:16px">File contents</h2>
+    <pre id="file-view" style="max-height:200px">select a file</pre>
+    <h2 style="margin-top:16px">log.lammps</h2>
+    <pre id="log-view" style="max-height:190px">&mdash;</pre>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let currentRun = null, stream = null, poll = null;
+const esc = (s) => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+
+function setHarness(ok, text) {
+  $("hdot").className = "dot " + (ok ? "ok" : "bad");
+  $("htxt").textContent = text;
+}
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  let body = {};
+  try { body = await res.json(); } catch (e) { body = { detail: await res.text() }; }
+  if (!res.ok) { const err = new Error(body.detail || body.error || ("HTTP " + res.status)); err.body = body; throw err; }
+  return body;
+}
+async function probe() {
+  try {
+    const h = await api("/healthz");
+    const ok = h.harness === "ok";
+    setHarness(ok, ok ? "harness ready \u00b7 " + h.harness_url : h.harness);
+  } catch (e) { setHarness(false, "backend unreachable"); }
+}
+function addEvent(ev) {
+  const d = ev.data || {};
+  let cls = "ev", label = ev.type, detail = "";
+  if (ev.type === "tool/call") { cls += " tool"; detail = d.name + "()"; }
+  else if (ev.type === "tool/result") {
+    if (d.is_error) cls += " err";
+    detail = (d.is_error ? "error: " : "") + (d.preview || "").slice(0, 240);
+  } else if (ev.type === "agent/status") { detail = d.status; }
+  else if (ev.type === "user/message") {
+    const fromGate = d.source && d.source !== "user";
+    if (fromGate) cls += " gate";
+    label = fromGate ? "stop-gate \u2192 agent" : "researcher \u2192 agent";
+    detail = (d.preview || "").slice(0, 320);
+  } else if (ev.type === "stream/error") { cls += " err"; detail = d.detail || ""; }
+  else { detail = JSON.stringify(d).slice(0, 160); }
+  const el = document.createElement("div");
+  el.className = cls;
+  el.innerHTML = '<div class="k">#' + (ev.seq != null ? ev.seq : "\u2013") + " " + esc(label) + "</div><div>" + esc(detail) + "</div>";
+  const box = $("activity");
+  box.appendChild(el); box.scrollTop = box.scrollHeight;
+}
+function watchEvents(runId) {
+  if (stream) stream.close();
+  stream = new EventSource(`/api/runs/${runId}/events`);
+  const seen = new Set();
+  stream.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    const key = (ev.seq != null ? ev.seq : "") + ev.type;
+    if (seen.has(key)) return;
+    seen.add(key); addEvent(ev);
+  };
+}
+async function refreshFiles(runId) {
+  try {
+    const r = await api(`/api/runs/${runId}/workspace`);
+    const box = $("files-list"); box.innerHTML = "";
+    if (!r.files.length) { box.textContent = "none yet"; return; }
+    for (const f of r.files) {
+      const row = document.createElement("div");
+      row.textContent = f.name + "  (" + f.size + " B)";
+      row.onclick = async () => {
+        const body = await api(`/api/runs/${runId}/file?name=${encodeURIComponent(f.name)}`);
+        $("file-view").textContent = body.text;
+      };
+      box.appendChild(row);
+    }
+  } catch (e) { /* run may still be starting */ }
+}
+async function refreshJob(runId) {
+  try {
+    const j = await api(`/api/runs/${runId}/job`);
+    const state = j.state || "unknown";
+    let cls = "";
+    if (state === "completed") cls = "ok";
+    else if (state === "failed") cls = "err";
+    else if (state === "running" || state === "pending") cls = "warn";
+    $("jobbox").innerHTML = `<span class="pill ${cls}">${esc(state)}</span>` +
+      (j.job_id ? ` <span class="muted">job ${esc(j.job_id)}</span>` : "") +
+      (j.elapsed ? ` <span class="muted">elapsed ${esc(j.elapsed)}</span>` : "") +
+      (j.exit_code ? ` <span class="muted">exit ${esc(j.exit_code)}</span>` : "") +
+      (j.error ? `<div class="muted">${esc(j.error)}</div>` : "");
+    if (j.log && j.log.text) $("log-view").textContent = j.log.text.slice(-4000);
+  } catch (e) { /* not submitted yet */ }
+}
+$("generate").onclick = async () => {
+  const btn = $("generate");
+  btn.disabled = true; btn.textContent = "Generating\u2026";
+  $("activity").innerHTML = "";
+  try {
+    const run = await api("/api/runs", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        request: $("request").value || "Create a Lennard-Jones simulation.",
+        task_id: $("task").value || null,
+        configuration: $("config").value,
+      }),
+    });
+    currentRun = run.run.run_id;
+    $("runinfo").textContent = currentRun + " \u00b7 " + run.run.configuration;
+    if (run.run.error) addEvent({ type: "stream/error", data: { detail: run.run.error } });
+    const files = $("files").files;
+    if (files.length) {
+      const fd = new FormData();
+      for (const f of files) fd.append("files", f);
+      await fetch(`/api/runs/${currentRun}/files`, { method: "POST", body: fd });
+    }
+    $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
+    watchEvents(currentRun);
+    if (poll) clearInterval(poll);
+    poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); }, 3000);
+    refreshFiles(currentRun); refreshJob(currentRun);
+  } catch (e) {
+    addEvent({ type: "stream/error", data: { detail: String(e.message || e) } });
+  } finally { btn.disabled = false; btn.textContent = "Generate simulation"; }
+};
+$("followup").onclick = async () => {
+  const msg = $("request").value.trim();
+  if (!currentRun || !msg) return;
+  try {
+    await api(`/api/runs/${currentRun}/message`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: msg }),
+    });
+    $("request").value = "";
+  } catch (e) { addEvent({ type: "stream/error", data: { detail: String(e.message || e) } }); }
+};
+$("submit").onclick = async () => {
+  if (!currentRun) return;
+  const btn = $("submit"); btn.disabled = true; btn.textContent = "Submitting\u2026";
+  try {
+    const r = await api(`/api/runs/${currentRun}/submit`, { method: "POST" });
+    if (r.submitted === false) {
+      addEvent({ type: "stream/error", data: { detail: "submit refused: " + (r.error || r.reason) } });
+    } else {
+      addEvent({ type: "tool/call", data: { name: "hpc_submit_job \u2192 " + r.job_id } });
+    }
+    refreshJob(currentRun);
+  } catch (e) {
+    const v = e.body && e.body.validation;
+    const detail = v ? `validation refused submission: ${v.counts.errors} error(s)` : String(e.message || e);
+    addEvent({ type: "stream/error", data: { detail } });
+  } finally { btn.disabled = false; btn.textContent = "Validate & submit to HPC"; }
+};
+$("cancel").onclick = async () => {
+  if (!currentRun) return;
+  try { await api(`/api/runs/${currentRun}/cancel`, { method: "POST" }); refreshJob(currentRun); }
+  catch (e) { addEvent({ type: "stream/error", data: { detail: String(e.message || e) } }); }
+};
+probe(); setInterval(probe, 15000);
+</script>
+</body>
+</html>

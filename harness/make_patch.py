@@ -51,6 +51,11 @@ TEMPLATE = """\
 # dsh-base and dsh-headless, so patching by id fails with "entry not found" and
 # every session then runs with no preset at all. Inserting works for both
 # profiles, and the benchmark needs headless specifically.
+- id: webserver
+  config:
+    host: 127.0.0.1
+    port: {web_port}
+
 - insert:
 {component_rows}
     - id: agent-presets
@@ -120,9 +125,11 @@ def render(
     active_task: str | None = None,
     task_id: str | None = None,
     default_preset: str = "vanilla",
+    web_port: int = 3081,
+    profile: str = "headless",
 ) -> str:
     venv_python = REPO_ROOT / ".venv" / "bin" / "python"
-    return TEMPLATE.format(
+    overlay = TEMPLATE.format(
         patch_path=OUTPUT,
         entry=PLUGIN_ENTRY,
         repo_root=REPO_ROOT,
@@ -132,13 +139,83 @@ def render(
         default_preset=default_preset,
         presets_dir=PRESETS_DIR,
         component_rows=component_rows(default_preset, active_task, task_id),
+        web_port=web_port,
     )
+    return _roster_form(overlay, profile)
+
+
+def _roster_form(overlay: str, profile: str) -> str:
+    """Adapt the overlay's roster row to the profile it targets.
+
+    The two profiles need genuinely different forms, and both failures are loud
+    rather than silent:
+
+    * **headless** stacks only dsh-base and dsh-headless, and neither
+      contributes a roster row, so the overlay must INSERT one. Patching by id
+      fails with 'entry "agent-presets" not found'.
+    * **web** already mounts a roster through the web-app bundle, so inserting
+      collides with 'duplicate loader entry id: agent-presets'. It must be
+      patched instead.
+
+    Unwrapping the insert block is expressed as a transform of the rendered
+    overlay rather than a second template, so the two forms cannot drift apart.
+    """
+    if profile != "web":
+        return overlay
+    # Unwrap the insert block, since the web-app bundle already mounts a roster
+    # and inserting a second one is a duplicate-id error.
+    lines = overlay.split("\n")
+    unwrapped: list[str] = []
+    unwrapping = False
+    for line in lines:
+        if line.strip() == "- insert:":
+            unwrapping = True
+            continue
+        if unwrapping:
+            if line.startswith("    "):
+                unwrapped.append(line[4:])
+                continue
+            if line.strip() == "":
+                unwrapped.append(line)
+                continue
+            unwrapping = False
+        unwrapped.append(line)
+
+    # Then drop the roster row entirely. It does not work here: the web roster
+    # resolves the harness's own shipped presets and ignores our roots, so both
+    # an explicit `agentPreset` and the row's own `default` name a preset that
+    # cannot be found and every session creation fails. The web overlay does not
+    # need presets anyway — it mounts the configuration's components directly,
+    # which is the mechanism already proven to work. Keeping a row that can only
+    # fail would be worse than having none.
+    out: list[str] = []
+    skipping = False
+    for line in unwrapped:
+        if line.startswith("- id: agent-presets"):
+            skipping = True
+            continue
+        if skipping:
+            if line.startswith(("  ", "\t")) or line.strip() == "":
+                continue
+            skipping = False
+        out.append(line)
+    text = "\n".join(out)
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    return text
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--print", dest="print_only", action="store_true", help="print instead of writing")
     parser.add_argument("--active-task", default=None, help="benchmark task id to bind for the agent")
+    parser.add_argument("--port", type=int, default=3081, help="web server port")
+    parser.add_argument(
+        "--mode",
+        choices=("headless", "web"),
+        default="headless",
+        help="target profile; the roster row must be inserted for headless and patched for web",
+    )
     parser.add_argument(
         "--preset",
         default="vanilla",
@@ -158,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
 
     task_id = args.task_id or args.active_task
     presets = write_presets()
-    content = render(args.active_task, task_id, args.preset)
+    content = render(args.active_task, task_id, args.preset, args.port, args.mode)
     if args.print_only:
         print(content, end="")
         return 0
