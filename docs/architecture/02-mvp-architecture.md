@@ -461,7 +461,7 @@ rather than merely confirming them.
 | Network sandbox | **None.** `sandbox/src/index.ts:25`: *"Network and process visibility are outside this vocabulary."* No egress allowlist | HPC confinement cannot come from an OS sandbox. It comes from having no `hpc_run_shell` at all — fixed-function tools are the enforcement |
 | Env / config | `.env` loading is narrow: only `<cwd>/.env` and `$DSH_HOME/.env`, read-only, and it feeds the **credentials** domain | The harness will *not* read our `.env` for its own config. The MCP server receives settings through the `mcp-client` row's `env:` block (`!!js process.env.X`), or reads `.env` itself |
 | Out-of-tree client UI | The `clientBundle()` tsdown preset is **not published**; a bundle-purity gate rejects cross-plugin value imports | **Validates Option B.** Building the three Areas as in-GUI client plugins would fight unpublished packaging |
-| Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | **Validates Option B.** Area C's job card needs our own UI; the harness can only render `generic`/`terminal`/`diff`/`search`/`read`/`web` |
+| Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | Narrower than this document first claimed. It blocks a custom *tool card*, not custom UI: see the correction below |
 | Host HTTP routes | `ctx.webServer.register({ kind: 'exact'\|'prefix', path, handler })` (`webserver/src/index.ts:59`) is the sanctioned out-of-tree route | Available if a host-half route is ever needed; our FastAPI app is independent of it |
 | S firing boundary | The gate runs only at the **natural stop boundary**: `agent-loop/src/agent.ts:294-299` gates on `turnEnds`, and a step that emitted tool calls leaves `turnEnds === null`, skipping it | Correct semantics for a Stop hook — S judges a *finished* attempt, not a mid-loop state. S never sees a half-written script. |
 | S loop guard | `hooks-claude-code` hard-codes `stop_hook_active: false` and its README records `TODO(stop-loop-guard)`; `core/agent-loop/README.md:134` states *"No built-in turn budget"* | Confirms S **must** self-limit. Our `MAX_BLOCKS` budget is not defensive padding; without it an ungated validator loops forever. |
@@ -470,6 +470,48 @@ rather than merely confirming them.
 | **SDK cannot gate a turn** | Both SDKs expose only `initialize` / `session/prompt` / `shutdown` plus four notifications. They can **observe** a run but cannot **block** a turn's completion | **This is why D3 is forced, not merely convenient.** `S` has no out-of-process form: an external driver can detect a bad script only *after* the turn ended, which is post-hoc re-prompting, not the paper's termination condition. S must be an in-process plugin. |
 | Cancellation, per path | HTTP RPC exposes `session.cancel` (and `session.attachment`, `session.history`). The SDK's stdio protocol exposes **no** cancellation and no client→server notifications | Option B's web app speaks HTTP RPC, so the brief's "the user can cancel a job" is satisfiable. Had we driven everything through the SDK, it would not be. |
 | Headless CLI flags | `dsh --profile headless "task"` prints the final assistant text and exits 0/1. There is **no `--json` / `--print` flag** | Benchmark metrics come from the **session log**, not from CLI stdout. That is already how the evaluator is designed. |
+
+### Correction: the harness *can* render custom UI out-of-tree
+
+An earlier version of this document claimed the closed card vocabulary meant Area
+C's job card could not be rendered by the harness at all, and cited that as
+partly validating Option B. **That was too strong.** Verified against source:
+
+`ConversationNodeDefinition.match(event: SessionEvent)` is invoked against
+**every raw session event** by the engine
+(`packages/client/runtime/src/client/contract/conversation.d.ts:160`, registered
+through `ctx.conversationEvents.register(...)`). So a client plugin has a
+supported, documented surface that sees the full durable event stream and can
+derive arbitrary UI from it.
+
+What is actually true: the closed union prevents a custom *tool card* — you
+cannot add `card: 'job'` — but a `ConversationNodeDefinition` renders whatever it
+likes. The constraint is narrower than I wrote.
+
+**Option B still stands**, on the reasons that were load-bearing rather than this
+one: `S` must be in-process (the SDK cannot gate a turn), the web app owns Areas
+A and C end to end, and `clientBundle()` is unpublished out-of-tree. The claim
+about card vocabulary was decoration, and decoration that was wrong.
+
+### WebSocket implementation facts for Area B
+
+Recorded because each is easy to get wrong in a way that looks like a different
+failure:
+
+- **The socket is downlink-only.** Any inbound frame is answered with
+  `close(1008, 'downlink only')` (`websocket-downlink.ts:109-111`). Upstream
+  traffic is HTTP `POST` only. A client that tries to send a subscribe message
+  gets a closed socket, not an error.
+- **Frame envelope**: every frame is
+  `{ type: 'server-request', rpcId, method, payload }` where `method` is the
+  payload's own `type`. Durable events arrive as
+  `{ type: 'session/event', sessionId, event: SessionEvent, view? }`, and
+  `SessionEvent = { type, seq, time, data, ignorable?, surfaceOp?, sourceEventSeqs? }`.
+- **No resume.** `events.mux` accepts a `since` map and **ignores it** —
+  documented as *"unimplemented in v1"*, with reconnection meaning "reopen the
+  stream" (`packages/host/apiproxy/src/api/events.ts:53`). So a dropped
+  connection is not replayable: Area B must re-read `session.history` after a
+  reconnect and reconcile by `seq`, or it will silently show a gap.
 
 ### Consequence of D1 (MCP tools) for long-running HPC work
 
