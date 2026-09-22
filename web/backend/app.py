@@ -161,6 +161,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
             workspace=workspace,
         )
         runs[run_id] = run
+        _write_metadata(run)
 
         try:
             run.session_id = await harness.create_session(
@@ -179,16 +180,27 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
 
     @app.get("/api/runs")
     async def list_runs() -> dict[str, Any]:
-        return {"runs": [r.to_dict() for r in runs.values()]}
+        """Every run this deployment knows about, newest first.
+
+        Live runs carry their session and event count; runs recovered from disk
+        carry their files and job state. History is a first-class surface, since
+        a researcher returning to a task needs the previous attempt, not only the
+        one currently in flight.
+        """
+        merged = dict(runs)
+        for discovered in _discover_runs(resolved, runs):
+            merged.setdefault(discovered.run_id, discovered)
+        ordered = sorted(merged.values(), key=lambda r: r.created_at, reverse=True)
+        return {"runs": [r.to_dict() for r in ordered]}
 
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str) -> dict[str, Any]:
-        return {"run": _require(runs, run_id).to_dict()}
+        return {"run": _require(runs, run_id, resolved).to_dict()}
 
     @app.post("/api/runs/{run_id}/message")
     async def send_message(run_id: str, payload: MessageRequest) -> dict[str, Any]:
         """Area A continued: a follow-up instruction on the same run."""
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         if not run.session_id:
             raise HTTPException(status_code=409, detail="this run has no live session")
         try:
@@ -200,7 +212,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     @app.post("/api/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> dict[str, Any]:
         """Cancel the session, and the remote job when one is known."""
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         result: dict[str, Any] = {"run_id": run_id, "session_cancelled": False}
         if run.session_id:
             try:
@@ -218,7 +230,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     @app.post("/api/runs/{run_id}/files")
     async def upload_files(run_id: str, files: list[UploadFile]) -> dict[str, Any]:
         """Attach structure, data or potential files to a run's workspace."""
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         written: list[str] = []
         for upload in files:
             name = Path(upload.filename or "upload").name
@@ -239,7 +251,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         choose and SSE is simpler for a one-way feed, while the harness offers
         only the socket.
         """
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
 
         async def generate() -> AsyncIterator[bytes]:
             sent = 0
@@ -265,7 +277,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     @app.get("/api/runs/{run_id}/workspace")
     async def workspace_files(run_id: str) -> dict[str, Any]:
         """The generated files, so a researcher can see what was produced."""
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         if not run.workspace.is_dir():
             return {"run_id": run_id, "files": []}
         files = []
@@ -286,7 +298,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         The path is resolved and checked to be inside the run's workspace: a
         traversal here would turn a file viewer into an arbitrary file reader.
         """
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         candidate = (run.workspace / name).resolve()
         root = run.workspace.resolve()
         if candidate != root and root not in candidate.parents:
@@ -304,7 +316,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     @app.get("/api/runs/{run_id}/job")
     async def job_status(run_id: str) -> dict[str, Any]:
         """Remote job state and the LAMMPS log, read from the cluster."""
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         job_id = run.job.get("job_id")
         if not job_id:
             return {"run_id": run_id, "state": "not_submitted", "job": run.job}
@@ -321,7 +333,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         """
         from adapter.validator import validate_workspace
 
-        run = _require(runs, run_id)
+        run = _require(runs, run_id, resolved)
         try:
             validation = validate_workspace(
                 run.workspace,
@@ -347,6 +359,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
             _submit_remote, resolved, run.workspace, run_id, nodes, ntasks, walltime
         )
         run.job = result
+        _write_metadata(run)
         return {"run_id": run_id, "validation": validation.to_dict(), **result}
 
     # ---------------------------------------------------------- frontend --- #
@@ -370,8 +383,93 @@ def settings_configurations(settings: Settings) -> tuple[str, ...]:
     return settings.benchmark.configurations
 
 
-def _require(runs: dict[str, Run], run_id: str) -> Run:
+RUN_ID_PREFIX = "run-"
+
+#: Run metadata lives beside the generated files.
+#:
+#: The directory name carries the id and the files carry the result, but neither
+#: says which task was requested or which adapter configuration produced it. That
+#: is exactly what a researcher returning to a run needs to know, and what an
+#: ablation needs in order to attribute a result.
+METADATA_NAME = "run.json"
+
+
+def _write_metadata(run: "Run") -> None:
+    """Persist a run's identity. Never raises: metadata is useful, not vital."""
+    try:
+        (run.workspace / METADATA_NAME).write_text(
+            json.dumps(
+                {
+                    "run_id": run.run_id,
+                    "task_id": run.task_id,
+                    "configuration": run.configuration,
+                    "session_id": run.session_id,
+                    "created_at": run.created_at,
+                    "job": run.job,
+                    "error": run.error,
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def _read_metadata(workspace: Path) -> dict[str, Any]:
+    path = workspace / METADATA_NAME
+    if not path.is_file():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _discover_runs(settings: Settings, known: dict[str, "Run"]) -> list["Run"]:
+    """Runs found on disk that this process does not already know about.
+
+    The in-memory registry is a live-session cache, not the record. A workspace
+    directory is the durable artefact: it survives a restart, a crash, and the
+    browser being closed, and it holds the generated files and logs a researcher
+    comes back for. Without this, reloading the page after a backend restart
+    showed an empty history even though every run was still on disk.
+    """
+    root = settings.repo_root / "workspace"
+    if not root.is_dir():
+        return []
+    discovered: list[Run] = []
+    for path in sorted(root.iterdir(), reverse=True):
+        if not path.is_dir() or not path.name.startswith(RUN_ID_PREFIX):
+            continue
+        if path.name in known:
+            continue
+        meta = _read_metadata(path)
+        discovered.append(
+            Run(
+                run_id=path.name,
+                task_id=meta.get("task_id"),
+                configuration=str(meta.get("configuration") or "unknown"),
+                workspace=path,
+                created_at=float(meta.get("created_at") or path.stat().st_mtime),
+                job=dict(meta.get("job") or {}),
+                error=meta.get("error"),
+            )
+        )
+    return discovered
+
+
+def _require(runs: dict[str, Run], run_id: str, settings: Settings | None = None) -> Run:
     run = runs.get(run_id)
+    if run is None and settings is not None:
+        # Rehydrate from disk, so a past run stays reachable after a restart.
+        for candidate in _discover_runs(settings, runs):
+            if candidate.run_id == run_id:
+                runs[run_id] = candidate
+                run = candidate
+                break
     if run is None:
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
     return run

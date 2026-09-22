@@ -47,7 +47,9 @@ level3:
   - id: damping_scales_with_timestep
     kind: damping_ratio
     command: nvt
-    argument: 3
+    # fix ID group nvt temp Tstart Tstop Tdamp -> Tdamp is argument index 6.
+    # An earlier value of 3 read the literal word 'temp'.
+    argument: 6
     reference_command: timestep
     minimum_ratio: 20
     maximum_ratio: 2000

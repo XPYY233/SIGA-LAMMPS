@@ -169,6 +169,14 @@
       <button id="followup" disabled>追加修改要求</button>
     </div>
     <div class="row"><span id="runinfo" class="hint">尚未创建任务</span></div>
+
+    <div class="sub">
+      <h2>历史任务 <span id="histcount" class="hint" style="margin:0;display:inline"></span></h2>
+      <div id="history" class="files" style="max-height:210px">
+        <div class="f"><span class="empty" style="padding:0">加载中…</span></div>
+      </div>
+      <div class="hint">点击任意一条可重新查看该任务的活动、文件与作业状态。</div>
+    </div>
   </section>
 
   <section>
@@ -329,7 +337,7 @@ $("generate").onclick = async () => {
     watchEvents(currentRun);
     if (poll) clearInterval(poll);
     poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); }, 3000);
-    refreshFiles(currentRun); refreshJob(currentRun);
+    refreshFiles(currentRun); refreshJob(currentRun); loadHistory();
   } catch (e) {
     addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } });
   } finally { btn.disabled = false; btn.textContent = "生成模拟"; }
@@ -394,7 +402,67 @@ $("theme").onclick = () => {
   localStorage.setItem(THEME_KEY, next);
 };
 
-probe(); setInterval(probe, 15000);
+/* ---- 历史任务：可回看 ---- */
+function ago(ts) {
+  const s = Math.max(0, (Date.now() / 1000) - ts);
+  if (s < 60) return "刚刚";
+  if (s < 3600) return Math.floor(s / 60) + " 分钟前";
+  if (s < 86400) return Math.floor(s / 3600) + " 小时前";
+  return Math.floor(s / 86400) + " 天前";
+}
+async function loadHistory() {
+  try {
+    const { runs } = await api("/api/runs");
+    const box = $("history");
+    const live = [];
+    for (const r of runs) live.push(r);
+    $("histcount").textContent = runs.length ? "（" + runs.length + "）" : "";
+    if (!runs.length) {
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">暂无历史任务</span></div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const r of runs) {
+      const row = document.createElement("div");
+      row.className = "f";
+      row.style.flexDirection = "column";
+      row.style.alignItems = "flex-start";
+      const active = r.run_id === currentRun;
+      row.innerHTML =
+        '<div style="display:flex;justify-content:space-between;width:100%;gap:8px">' +
+          "<span style=\"font-weight:500" + (active ? ";color:var(--accent)" : "") + "\">" +
+            esc(r.run_id) + (active ? " · 当前" : "") + "</span>" +
+          '<span class="sz">' + esc(ago(r.created_at)) + "</span>" +
+        "</div>" +
+        '<div class="sz" style="margin-top:2px">' +
+          esc(r.task_id || "自由描述") + " · " + esc(r.configuration) +
+          (r.job && r.job.job_id ? " · 作业 " + esc(r.job.job_id) : "") +
+          (r.error ? " · 失败" : "") +
+        "</div>";
+      row.onclick = () => openRun(r.run_id);
+      box.appendChild(row);
+    }
+  } catch (e) {
+    $("history").innerHTML = '<div class="f"><span class="empty" style="padding:0">历史加载失败</span></div>';
+  }
+}
+async function openRun(runId) {
+  currentRun = runId;
+  $("activity").innerHTML = '<div class="empty">正在加载该任务的活动流…</div>';
+  $("jobalert").innerHTML = "";
+  $("runinfo").textContent = "任务 " + runId + "（历史）";
+  $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
+  watchEvents(runId);          // 只回放该任务此后产生的事件
+  refreshFiles(runId);
+  refreshJob(runId);
+  if (poll) clearInterval(poll);
+  poll = setInterval(() => { refreshFiles(runId); refreshJob(runId); }, 4000);
+  loadHistory();
+}
+
+probe(); loadHistory();
+setInterval(probe, 15000);
+setInterval(loadHistory, 20000);
 </script>
 </body>
 </html>

@@ -41,6 +41,10 @@ level3:
     kind: regex_value
     command: deform
     token: 'erate'
+    # `fix ... deform N z erate <rate>`: the rate is one past the token.
+    # This key was previously absent, so the offset defaulted to 0 and
+    # compared the literal word 'erate' against the expected number.
+    value_index: 1
     expected: 0.001
     tolerance: 0.0002
     description: the specified engineering strain rate

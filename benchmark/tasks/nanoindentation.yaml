@@ -47,7 +47,9 @@ level3:
     kind: regex_value
     command: indent
     token: 'sphere'
-    value_index: 3
+    # `... indent K sphere x y z r`: the radius is four past the token.
+    # A value of 3 read z, the indenter centre rather than its radius.
+    value_index: 4
     expected: 5.0
     tolerance: 0.1
     description: the specified indenter radius
