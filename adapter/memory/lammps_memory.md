@@ -14,6 +14,25 @@ arguments of any command, call `mcp__lammps__search_lammps` — never guess a ke
   error names something you do not recognise.
 - **`mcp__lammps__validate_lammps_input(...)`** — deterministic structural checks. Call it
   **before** you consider the task finished, and fix what it reports.
+- **`mcp__lammps__hpc_*`** — the production runs go here. Use
+  `hpc_preflight` once, `hpc_upload_workspace` then `hpc_submit_job` when the
+  script validates, and `hpc_job_status` / `hpc_read_log` to collect the result.
+
+## Where to run
+
+**Simulation runs belong on the cluster, not on this machine.** Submit through
+the `hpc_*` tools. A local `lmp` may exist and will often work, but a local run
+is not the deliverable: it consumes the wrong machine, produces a second set of
+results, and leaves the reader unable to tell which output is the real one.
+
+Run locally only when it is cheap and diagnostic — a `run 0` to check that a
+script parses, or a few hundred steps to catch an obvious blow-up before
+spending queue time. Anything whose numbers might be reported goes to the
+cluster.
+
+If a submission fails, report why. Do not silently fall back to running locally:
+a result the researcher believes came from the cluster but did not is worse than
+no result.
 
 ## Command order
 

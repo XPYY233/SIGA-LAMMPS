@@ -88,3 +88,27 @@ self-evolution（论文有，但本项目阶段不要求）· 多智能体 · �
 | SSH 证书 | `sy_hl_login` 的证书 **2026-10-22 到期**，届时需要续期；`hpc/preflight` 会把认证失败单独报出来 |
 | 索引重建 | corpus 换了之后：`.venv/bin/python -m adapter.cli build-index` |
 | 测试 | `.venv/bin/python -m pytest -q`（当前 300 通过 / 2 xfail / 1 skip） |
+
+---
+
+## 新增：两处本轮发现的问题
+
+### P0 — 执行位置没有被约束（已修 M，待验证）
+
+- **现象**：规格要求的流程是 `生成 → 校验 → 上传超算 → sbatch → 读日志`，但 agent 在本地找到 `lmp` 就直接跑了，产出 `log.local` 与本地 `.dat`，同时又跑了超算产出 `hpc_*.dat`。
+- **后果**：**两套结果，读者无法判断哪一套算数**；而且消耗了错误的机器。
+- **原因**：M primer 写了工具用法，但**完全没提执行位置**；HPC 工具暴露了却没有引导。
+- **已做**：M 新增 "Where to run" 一节，明确「模拟运行属于集群」，本地只用于 `run 0` 或几百步的廉价诊断，并明确禁止「提交失败就静默回退到本地」。
+- **待验证**：新建一个任务，确认 agent 直接走 `hpc_preflight → hpc_upload_workspace → hpc_submit_job`，且工作区里**不出现**本地长跑的 `log.local`。
+
+### P2 — OVITO 可视化（部分可用）
+
+- **现状**：`ovito 3.16.1` 已装入 venv。**但 macOS arm64 的 wheel 有打包 bug**：`ovito_bindings.so` 链接 `libospray.3.2.0.dylib`，而包里只提供 `libospray.3.dylib`。
+- **临时修法**：在 `.venv/lib/python3.12/site-packages/ovito/plugins/` 下软链
+  `ln -sf libospray.3.dylib libospray.3.2.0.dylib`
+  ⚠️ **重装 ovito 后需重做**，建议写进 setup 脚本。
+- **未验证**：加载、RDF/配位数计算、离屏渲染**都还没测**（当时的 dump 文件已随临时工作区清理）。
+- **下一步**：先在当前工作区跑一个会输出 `dump` 的任务，再用它验证
+  - 能否 `import_file` 读取 LAMMPS dump
+  - RDF / 配位数 / CNA 能否计算
+  - `Viewport.render_image` 在无显示环境能否成功（macOS 上可能失败，若失败则退化为「导出数据 + 只算不渲染」）
