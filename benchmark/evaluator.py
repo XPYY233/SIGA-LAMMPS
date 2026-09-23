@@ -266,29 +266,49 @@ def _level3_check(script: ParsedScript, check: dict[str, Any]) -> CheckOutcome:
 
 
 def parse_thermo(text: str) -> tuple[list[str], list[list[float]]]:
-    """Extract the thermo table from a LAMMPS log.
+    """Extract the thermo table from a LAMMPS log, across every run in the script.
 
-    LAMMPS prints the header, then one numeric row per output step. The header is
-    matched on its first column so a later table in the same log does not
-    confuse it.
+    LAMMPS reprints the header for each `run` command, so a normal staged script
+    — equilibrate at one temperature, then ramp to another — leaves several
+    tables in one log. Reading only the first describes the *equilibration*, not
+    the experiment.
+
+    That was not a cosmetic difference. `temperature_reached` samples the second
+    half of the rows it is given, so on a two-stage melting run it measured the
+    cold stage and reported "Temp left [0.6, 2] with 0.087" — failing a script
+    that had done exactly what was asked. Only a multi-stage log executed
+    end-to-end exposed it.
+
+    Tables are merged in file order when their headers agree. A table with a
+    different header is a different set of observables; merging rows of
+    differing width would corrupt every index-based reader downstream, so it is
+    left out rather than concatenated.
     """
     lines = text.splitlines()
+    columns: list[str] = []
+    rows: list[list[float]] = []
+
     for index, line in enumerate(lines):
         if not _THERMO_HEADER.match(line):
             continue
-        columns = line.split()
-        rows: list[list[float]] = []
+        header = line.split()
+        table: list[list[float]] = []
         for candidate in lines[index + 1 :]:
             if not candidate.strip():
                 break
             parts = candidate.split()
             try:
-                rows.append([float(p) for p in parts])
+                table.append([float(p) for p in parts])
             except ValueError:
                 break
-        if rows:
-            return columns, rows
-    return [], []
+        if not table:
+            continue
+        if not columns:
+            columns, rows = header, table
+        elif header == columns:
+            rows.extend(table)
+
+    return columns, rows
 
 
 def run_level4(check_spec: tuple[dict[str, Any], ...], log_text: str) -> list[CheckOutcome]:

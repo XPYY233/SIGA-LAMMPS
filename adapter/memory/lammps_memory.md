@@ -17,6 +17,12 @@ arguments of any command, call `mcp__lammps__search_lammps` — never guess a ke
 - **`mcp__lammps__hpc_*`** — the production runs go here. Use
   `hpc_preflight` once, `hpc_upload_workspace` then `hpc_submit_job` when the
   script validates, and `hpc_job_status` / `hpc_read_log` to collect the result.
+- **`mcp__lammps__hpc_fetch_results(...)`** — **call this after every job that
+  completes.** Reading the log gives you the numbers, but trajectories, restarts
+  and data files stay on the cluster until they are fetched. Until then the
+  local workspace holds only your input script, so a finished run looks like it
+  produced nothing and there is nothing to visualise. Pass the remote directory
+  the job ran in and the local workspace you are working in.
 
 ## Where to run
 

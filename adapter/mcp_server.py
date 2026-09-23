@@ -367,6 +367,50 @@ def build_server() -> MCPServer:
         except HpcError as exc:
             return {"error": "hpc_error", "detail": str(exc)}
 
+    @server.tool(
+        name="hpc_fetch_results",
+        description=(
+            "Copy a finished job's output files — log.lammps, dump trajectories, data files — "
+            "from the cluster back into a local directory. Use this after a job completes: "
+            "reading the log tells you the numbers, but the trajectory files stay on the "
+            "cluster until they are fetched, so the local file list shows nothing and there "
+            "is nothing to visualise. Oversized files are skipped and reported, never "
+            "silently truncated."
+        ),
+    )
+    def hpc_fetch_results(
+        remote_subdir: str,
+        local_dir: str,
+        suffixes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a run's result files back from the cluster.
+
+        Args:
+            remote_subdir: the remote directory the job ran in.
+            local_dir: local directory to write into; usually the workspace you
+                are working in, given as an absolute path.
+            suffixes: optional file extensions to fetch, e.g. ['.dump'].
+        """
+        from hpc import HpcError
+
+        session, error = _hpc()
+        if error:
+            return error
+        assert session is not None
+        try:
+            with session:
+                kwargs: dict[str, Any] = {}
+                if suffixes:
+                    kwargs["suffixes"] = suffixes
+                report = session.client.fetch_results(remote_subdir, local_dir, **kwargs)
+                report["note"] = (
+                    "Fetched. These files are now local and can be read or visualised "
+                    "without going back to the cluster."
+                )
+                return report
+        except HpcError as exc:
+            return {"error": "hpc_error", "detail": str(exc)}
+
     return server
 
 

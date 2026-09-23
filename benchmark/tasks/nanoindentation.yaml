@@ -94,10 +94,15 @@ level4:
     description: "a stable indentation must not lose atoms"
     kind: log_forbidden
     pattern: 'Lost atoms|Out of range atoms'
+  # `E_pair` is a valid LAMMPS keyword but is not printed by any standard
+  # `thermo_style`, so a check naming it could never be decided — it reported
+  # "needs human review" on every run, including correct ones, forever. `PotEng`
+  # is the standard column for the same quantity on these single-interaction
+  # systems, so the check now has something to read.
   - id: energy_finite
     description: "no NaN or infinity in the energy columns"
     kind: log_finite
-    columns: [TotEng, E_pair]
+    columns: [TotEng, PotEng]
   - id: hardness_analysis
     kind: human_review_required
     description: >

@@ -41,7 +41,35 @@ __all__ = [
     "HpcUnreachableError",
     "WorkspaceEscapeError",
     "RemoteFile",
+    "DEFAULT_RESULT_SUFFIXES",
+    "DEFAULT_MAX_FILE_BYTES",
+    "DEFAULT_MAX_TOTAL_BYTES",
 ]
+
+# What a LAMMPS run leaves behind that is worth carrying home: the log with its
+# thermo table, trajectories for visualisation, and structured data. The slurm
+# script and job stdout are handled separately by `hpc_read_log`, and `.err`
+# files are almost always empty on success, so fetching them adds noise.
+DEFAULT_RESULT_SUFFIXES = (
+    ".dump",
+    ".lammpstrj",
+    ".xyz",
+    ".cfg",
+    ".data",
+    ".dat",
+    ".csv",
+    ".lammps",
+    ".log",
+    ".out",
+    ".txt",
+    ".restart",
+)
+
+# A dump grows with atom count times steps. These bounds keep one careless
+# trajectory from filling the local disk or stalling the console; anything over
+# them is reported as skipped with its size, so the decision is visible.
+DEFAULT_MAX_FILE_BYTES = 32 * 1024 * 1024
+DEFAULT_MAX_TOTAL_BYTES = 128 * 1024 * 1024
 
 
 class HpcError(RuntimeError):
@@ -352,3 +380,123 @@ class HpcClient:
         with self.sftp.open(target, "w") as handle:
             handle.write(text)
         return target
+
+    def download_file(
+        self,
+        subpath: str,
+        local: Path | str,
+        *,
+        max_bytes: int = DEFAULT_MAX_FILE_BYTES,
+    ) -> int:
+        """Download one remote file into *local*, returning the bytes written.
+
+        The size is checked before the transfer starts rather than after: a
+        truncated dump is worse than no dump, because it looks like a complete
+        trajectory to every downstream reader.
+        """
+        target = self.resolve(subpath)
+        try:
+            size = int(self.sftp.stat(target).st_size or 0)
+        except FileNotFoundError as exc:
+            raise HpcError(f"no such remote file: {target}") from exc
+        if size > max_bytes:
+            raise HpcError(
+                f"{subpath} is {size} bytes, over the {max_bytes} byte limit for one file"
+            )
+        local = Path(local)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        self.sftp.get(target, str(local))
+        return local.stat().st_size
+
+    def fetch_results(
+        self,
+        subpath: str,
+        local_dir: Path | str,
+        *,
+        suffixes: Iterable[str] = DEFAULT_RESULT_SUFFIXES,
+        only: Iterable[str] = (),
+        max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
+        max_total_bytes: int = DEFAULT_MAX_TOTAL_BYTES,
+        exclude: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Bring a finished run's output files back to the local workspace.
+
+        This is the return half of the HPC round trip. Without it a run could be
+        submitted, polled and its log read, but its trajectory files stayed on
+        the cluster — so the local file list showed only the input script and a
+        completed run looked like it had produced nothing.
+
+        Getting *everything* is often the wrong move, though: a trajectory can
+        run to hundreds of megabytes, and most of it is never looked at. Passing
+        `only` fetches named files one at a time, so a caller can list the remote
+        directory and pull back just the log it wants to read or the one dump it
+        wants to visualise.
+
+        Selection is by suffix and every exclusion is reported with a reason
+        rather than dropped quietly, because the interesting failure is a result
+        file that did not come back and nobody noticing.
+        """
+        local_dir = Path(local_dir)
+        local_dir.mkdir(parents=True, exist_ok=True)
+        wanted = {s.lower() for s in suffixes}
+        named = set(only)
+        if named:
+            # An explicit request overrides the suffix filter: the caller has
+            # already decided this file matters, whatever it is called.
+            wanted = set()
+        skip = set(exclude)
+
+        fetched: list[dict[str, Any]] = []
+        skipped: list[dict[str, str]] = []
+        total = 0
+
+        for entry in self.list_dir(subpath):
+            if named and entry.name not in named:
+                continue
+            if entry.is_dir:
+                skipped.append({"name": entry.name, "reason": "directory"})
+                continue
+            if entry.name in skip:
+                skipped.append({"name": entry.name, "reason": "excluded"})
+                continue
+            if not named and Path(entry.name).suffix.lower() not in wanted:
+                skipped.append({"name": entry.name, "reason": "suffix not a result type"})
+                continue
+            if entry.size == 0:
+                skipped.append({"name": entry.name, "reason": "empty"})
+                continue
+            if entry.size > max_file_bytes:
+                skipped.append(
+                    {
+                        "name": entry.name,
+                        "reason": f"{entry.size} bytes exceeds the per-file limit {max_file_bytes}",
+                    }
+                )
+                continue
+            if total + entry.size > max_total_bytes:
+                skipped.append(
+                    {
+                        "name": entry.name,
+                        "reason": f"would exceed the total budget {max_total_bytes}",
+                    }
+                )
+                continue
+
+            destination = local_dir / entry.name
+            written = self.download_file(
+                posixpath.join(subpath, entry.name), destination, max_bytes=max_file_bytes
+            )
+            total += written
+            fetched.append({"name": entry.name, "bytes": written, "local": str(destination)})
+
+        missing = sorted(named - {f["name"] for f in fetched} - {s["name"] for s in skipped})
+        for name in missing:
+            skipped.append({"name": name, "reason": "not present in the remote directory"})
+
+        return {
+            "remote_dir": self.resolve(subpath),
+            "local_dir": str(local_dir),
+            "fetched": fetched,
+            "skipped": skipped,
+            "total_bytes": total,
+        }

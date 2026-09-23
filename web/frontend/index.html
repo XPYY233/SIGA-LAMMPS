@@ -146,6 +146,13 @@
   .files .f:last-child{border-bottom:none}
   .files .f:hover{background:var(--surface2); color:var(--accent)}
   .files .f .sz{color:var(--fg-subtle); font-size:11px}
+  /* 远端文件行：名字占满剩余宽度，大小与按钮靠右，长名字不会把按钮挤走 */
+  .files .f > span:first-child{flex:1; min-width:0; overflow:hidden;
+                               text-overflow:ellipsis; white-space:nowrap}
+  .files .f .acts{display:flex; gap:4px; flex:none}
+  .files .f .acts button{padding:1px 7px; font-size:11px; border-radius:5px;
+                         background:var(--surface2); color:var(--fg); border:1px solid var(--border)}
+  .files .f .acts button:hover{border-color:var(--accent); color:var(--accent)}
   .sub{margin-top:16px}
   #viz img{max-width:100%; border:1px solid var(--border); border-radius:6px; margin-top:6px}
   .vizmeta{margin-top:6px; font-size:12px; color:var(--fg-muted); line-height:1.6}
@@ -247,7 +254,16 @@
 
     <div class="sub"><h2>生成的文件 <span id="filecount" class="hint" style="margin:0;display:inline"></span></h2>
       <div id="files-list" class="files"><div class="f"><span class="empty" style="padding:0">暂无</span></div></div>
-      <div class="hint">列表可滚动；带 👁 的轨迹文件点击即可渲染。</div>
+      <div class="hint">这些是<strong>本地</strong>文件。列表可滚动；带 👁 的轨迹文件点击即可渲染。</div>
+    </div>
+
+    <div class="sub"><h2>超算上的文件 <span id="remotecount" class="hint" style="margin:0;display:inline"></span></h2>
+      <div class="row" style="margin-bottom:6px">
+        <button id="remote-refresh" disabled>刷新远端清单</button>
+        <button id="fetch" disabled>全部取回</button>
+      </div>
+      <div id="remote-list" class="files"><div class="f"><span class="empty" style="padding:0">尚未查询远端</span></div></div>
+      <div class="hint">远端清单只是一次目录查询，不下载任何数据。<strong>查看</strong>在远端读取文本（如 log.lammps 的数值），不占本地空间；<strong>取回</strong>只拉这一个文件，带 👁 的取回后自动渲染。</div>
     </div>
     <div class="sub"><h2>文件内容</h2>
       <pre id="file-view" style="max-height:190px">点击左侧文件查看内容</pre>
@@ -368,6 +384,72 @@ async function refreshFiles(runId) {
     }
   } catch (e) {}
 }
+async function refreshRemote(runId) {
+  const box = $("remote-list");
+  $("remote-list").innerHTML = '<div class="f"><span class="empty" style="padding:0">查询中…</span></div>';
+  try {
+    const r = await api(`/api/runs/${runId}/remote`);
+    if (!r.ok) {
+      $("remotecount").textContent = "";
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">远端不可达：' +
+        esc(r.error || "未知原因") + "</span></div>";
+      return;
+    }
+    const total = r.files.reduce((a, f) => a + (f.bytes || 0), 0);
+    $("remotecount").textContent = r.count ? "（" + r.count + " 个 · " + bytes(total) + "）" : "";
+    if (!r.files.length) {
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">远端目录为空——作业可能还没开始</span></div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const f of r.files) {
+      const row = document.createElement("div");
+      row.className = "f";
+      // 逐个文件的动作：能取回的才给按钮，纯输入文件不给，免得误点。
+      const acts = [];
+      if (f.is_result) acts.push('<button data-act="fetch">取回</button>');
+      if (!f.is_dir && f.bytes > 0) acts.push('<button data-act="view">查看</button>');
+      row.innerHTML =
+        "<span>" + (f.visualisable ? '<span class="eye">👁</span>' : "") + esc(f.name) + "</span>" +
+        '<span class="sz">' + bytes(f.bytes) + "</span>" +
+        (acts.length ? '<span class="acts">' + acts.join("") + "</span>" : "");
+      row.querySelectorAll("button").forEach((b) => {
+        b.onclick = (ev) => { ev.stopPropagation(); remoteAction(runId, f, b.dataset.act, b); };
+      });
+      box.appendChild(row);
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="f"><span class="empty" style="padding:0">查询失败：' + esc(e.message || e) + "</span></div>";
+  }
+}
+async function remoteAction(runId, f, act, btn) {
+  if (act === "view") {
+    // 在远端读文本：日志的数值不需要落到本地磁盘。
+    $("file-view").textContent = "正在从超算读取 " + f.name + " …";
+    try {
+      const r = await api(`/api/runs/${runId}/remote/file?name=${encodeURIComponent(f.name)}`);
+      $("file-view").textContent = r.ok
+        ? r.text + (r.truncated ? "\n\n[... 远端文件更大，此处已截断 ...]" : "")
+        : "读取失败：" + (r.error || "");
+    } catch (e) { $("file-view").textContent = "读取失败：" + (e.message || e); }
+    return;
+  }
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "取回中…"; }
+  try {
+    const r = await api(`/api/runs/${runId}/fetch?name=${encodeURIComponent(f.name)}`, { method:"POST" });
+    if (r.error || !(r.fetched || []).length) {
+      const why = r.error || (r.skipped && r.skipped[0] && r.skipped[0].reason) || "未取回";
+      $("jobalert").innerHTML = '<div class="alert">取回 ' + esc(f.name) + " 失败：" + esc(why) + "</div>";
+      return;
+    }
+    await refreshFiles(runId);
+    // 轨迹取回后直接渲染——用户点这一下就是为了看图。
+    if (f.visualisable) openFile(runId, f.name, true, f.bytes);
+  } catch (e) {
+    $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(e.message || e) + "</div>";
+  } finally { if (btn) { btn.disabled = false; btn.textContent = original; } }
+}
 async function refreshJob(runId) {
   try {
     const j = await api(`/api/runs/${runId}/job`);
@@ -419,7 +501,7 @@ $("generate").onclick = async () => {
       for (const f of files) fd.append("files", f);
       await fetch(`/api/runs/${currentRun}/files`, { method:"POST", body: fd });
     }
-    $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
+    $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false; $("fetch").disabled = false; $("remote-refresh").disabled = false;
     watchEvents(currentRun);
     if (poll) clearInterval(poll);
     poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); refreshResults(currentRun); }, 3000);
@@ -473,6 +555,30 @@ $("cancel").onclick = async () => {
   try { await api(`/api/runs/${currentRun}/cancel`, { method:"POST" }); refreshJob(currentRun); }
   catch (e) { $("jobalert").innerHTML = '<div class="alert">取消失败：' + esc(e.message || e) + "</div>"; }
 };
+$("fetch").onclick = async () => {
+  if (!currentRun) return;
+  const btn = $("fetch"); btn.disabled = true; btn.textContent = "取回中…";
+  $("jobalert").innerHTML = "";
+  try {
+    const r = await api(`/api/runs/${currentRun}/fetch`, { method:"POST" });
+    if (r.error) {
+      $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(r.error) + "</div>";
+    } else if (!(r.fetched || []).length) {
+      // 没取到东西是真信息，不是失败：远端可能还没跑完。
+      $("jobalert").innerHTML = '<div class="alert">远端没有可取回的结果文件。作业可能尚未完成。</div>';
+    } else {
+      const names = r.fetched.map(f => f.name).join("、");
+      addEvent({ type:"tool/call", data:{ name:"hpc_fetch_results → " + r.fetched.length + " 个文件" } });
+      $("jobalert").innerHTML = '<div class="note">已从超算取回 ' + r.fetched.length +
+        " 个文件（" + bytes(r.total_bytes) + "）：" + esc(names) + "</div>";
+    }
+    await refreshFiles(currentRun);
+    await refreshResults(currentRun);
+  } catch (e) {
+    $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(e.message || e) + "</div>";
+  } finally { btn.disabled = false; btn.textContent = "全部取回"; }
+};
+$("remote-refresh").onclick = () => { if (currentRun) refreshRemote(currentRun); };
 /* ---- 主题：默认跟随系统，手动选择后持久化 ---- */
 const THEME_KEY = "siga-theme";
 function applyTheme(mode) {
@@ -543,13 +649,15 @@ async function openRun(runId) {
   $("activity").innerHTML = '<div class="empty">正在加载该任务的活动流…</div>';
   $("jobalert").innerHTML = "";
   $("runinfo").textContent = "任务 " + runId + "（历史）";
-  $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
+  $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false; $("fetch").disabled = false; $("remote-refresh").disabled = false;
   watchEvents(runId);          // 只回放该任务此后产生的事件
   refreshFiles(runId);
+  refreshRemote(runId);
   refreshJob(runId);
   refreshResults(runId);
   if (poll) clearInterval(poll);
   poll = setInterval(() => { refreshFiles(runId); refreshJob(runId); refreshResults(runId); }, 4000);
+  // 远端清单不放进 4 秒轮询：每次都要开一条 SSH，太贵。
   loadHistory();
 }
 

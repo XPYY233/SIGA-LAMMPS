@@ -100,9 +100,14 @@ level4:
     kind: log_forbidden
     pattern: 'Lost atoms|Bond atoms missing|Out of range atoms'
     description: a melting run must not lose atoms
+  # `E_pair` is a valid LAMMPS keyword but is not printed by any standard
+  # `thermo_style`, so a check naming it could never be decided — it reported
+  # "needs human review" on every run, including correct ones, forever. `PotEng`
+  # is the standard column for the same quantity on these single-interaction
+  # systems, so the check now has something to read.
   - id: energy_finite
     kind: log_finite
-    columns: [TotEng, E_pair]
+    columns: [TotEng, PotEng]
     description: no NaN or infinity in the energy columns
   - id: melting_observable
     kind: human_review_required

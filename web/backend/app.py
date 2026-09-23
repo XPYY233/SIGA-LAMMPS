@@ -519,6 +519,63 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         _write_metadata(run)
         return {"run_id": run_id, "validation": validation.to_dict(), **result}
 
+    @app.get("/api/runs/{run_id}/remote")
+    async def remote_files(run_id: str):
+        """List what a run has produced on the cluster, without downloading it.
+
+        One directory listing costs almost nothing, while the outputs can be
+        hundreds of megabytes: a trajectory large enough to visualise is also
+        large enough that pulling it back unasked is rude to the local disk.
+        So the console shows the remote directory and fetches a file only when
+        someone asks to read or render that specific one.
+        """
+        run = _require(runs, run_id, resolved)
+        leaf = _remote_leaf(run, run_id)
+        result = await asyncio.to_thread(_remote_list, resolved, leaf)
+        return {"run_id": run_id, "remote_subdir": leaf, **result}
+
+    @app.get("/api/runs/{run_id}/remote/file")
+    async def remote_file_preview(run_id: str, name: str, max_bytes: int = 200_000):
+        """Read one remote file's text without downloading it to disk.
+
+        This is how a log gets inspected: the numbers are what matter, and they
+        are readable over the existing connection.
+        """
+        run = _require(runs, run_id, resolved)
+        leaf = _remote_leaf(run, run_id)
+        result = await asyncio.to_thread(
+            _remote_preview, resolved, leaf, name, min(max_bytes, 2_000_000)
+        )
+        return {"run_id": run_id, "name": name, **result}
+
+    @app.post("/api/runs/{run_id}/fetch")
+    async def fetch_results(run_id: str, suffixes: str = "", name: str = ""):
+        """Copy output files back from the cluster.
+
+        With `name`, one file is fetched — the usual case, since a caller has
+        just chosen something to look at. Without it, every result-type file in
+        the remote directory comes back, which is convenient after a small run
+        and wasteful after a large one.
+
+        The file panel lists the *local* workspace, so before this existed a run
+        that completed on the cluster showed only the input script it was given
+        and the metadata written beside it. The trajectory, the log and the
+        thermo table were all on the remote machine — produced, and unreachable.
+
+        The remote directory is taken from the recorded job rather than assumed
+        from the run id, so this works for a workspace submitted under any name.
+        """
+        run = _require(runs, run_id, resolved)
+        leaf = _remote_leaf(run, run_id)
+        wanted = tuple(
+            s if s.startswith(".") else f".{s}" for s in (p.strip() for p in suffixes.split(",")) if s
+        )
+        only = (name,) if name else ()
+        result = await asyncio.to_thread(
+            _fetch_remote, resolved, run.workspace, leaf, wanted, only
+        )
+        return {"run_id": run_id, **result}
+
     # ---------------------------------------------------------- frontend --- #
 
     @app.get("/", response_class=HTMLResponse)
@@ -1019,6 +1076,101 @@ def _submit_remote(
             }
     except (HpcError, ConfigError) as exc:
         return {"submitted": False, "error": str(exc)}
+
+
+def _remote_leaf(run: Any, run_id: str) -> str:
+    """The run's remote directory name.
+
+    `resolve` refuses absolute paths by design — that is what confines every
+    remote operation to the workspace — so only the final path component is
+    passed through, taken from the recorded job rather than assumed.
+    """
+    job = getattr(run, "job", None) or {}
+    remote_dir = str(job.get("remote_dir") or run_id)
+    return remote_dir.rstrip("/").split("/")[-1] or run_id
+
+
+def _remote_list(settings: Settings, subdir: str) -> dict[str, Any]:
+    """List one remote directory, classified so the console knows what it can do."""
+    from hpc import HpcError, open_session
+    from hpc.client import DEFAULT_RESULT_SUFFIXES
+
+    try:
+        from adapter.visualize import VISUALISABLE_SUFFIXES
+    except Exception:  # pragma: no cover - visualisation is optional
+        VISUALISABLE_SUFFIXES = frozenset()
+
+    try:
+        with open_session(settings) as session:
+            entries = session.client.list_dir(subdir)
+            result_suffixes = {s.lower() for s in DEFAULT_RESULT_SUFFIXES}
+            files = []
+            for entry in entries:
+                suffix = Path(entry.name).suffix.lower()
+                files.append(
+                    {
+                        "name": entry.name,
+                        "bytes": entry.size,
+                        "is_dir": entry.is_dir,
+                        # A file worth bringing home, versus one that is only
+                        # meaningful in place (the slurm script, the input).
+                        "is_result": (not entry.is_dir) and suffix in result_suffixes,
+                        # Whether fetching it unlocks the visualiser.
+                        "visualisable": (not entry.is_dir)
+                        and suffix in set(VISUALISABLE_SUFFIXES),
+                    }
+                )
+            return {"ok": True, "files": files, "count": len(files)}
+    except (HpcError, ConfigError) as exc:
+        return {"ok": False, "files": [], "count": 0, "error": str(exc)}
+
+
+def _remote_preview(
+    settings: Settings, subdir: str, name: str, max_bytes: int
+) -> dict[str, Any]:
+    """Read one remote file as text, bounded, without writing it locally."""
+    from hpc import HpcError, open_session
+
+    # The name arrives from a query string; reject anything that is not a plain
+    # filename so it cannot walk out of the run directory.
+    if name in {"", ".", ".."} or "/" in name or "\\" in name:
+        return {"ok": False, "error": "name must be a plain filename"}
+
+    try:
+        with open_session(settings) as session:
+            text = session.client.read_text(f"{subdir}/{name}", max_bytes=max_bytes)
+            return {
+                "ok": True,
+                "text": text,
+                "truncated": "truncated at" in text,
+                "bytes_shown": len(text),
+            }
+    except (HpcError, ConfigError) as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+def _fetch_remote(
+    settings: Settings,
+    workspace: Path,
+    remote_subdir: str,
+    suffixes: tuple[str, ...] = (),
+    only: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Bring a finished run's outputs home, synchronously, for ``to_thread``."""
+    from hpc import HpcError, open_session
+
+    try:
+        with open_session(settings) as session:
+            kwargs: dict[str, Any] = {}
+            if suffixes:
+                kwargs["suffixes"] = suffixes
+            if only:
+                kwargs["only"] = only
+            return session.client.fetch_results(remote_subdir, workspace, **kwargs)
+    except (HpcError, ConfigError) as exc:
+        # Same shape as the success path: a caller reading `total_bytes` should
+        # see 0, not a missing key that renders as "undefined" in the console.
+        return {"fetched": [], "skipped": [], "total_bytes": 0, "error": str(exc)}
 
 
 def _remote_job_status(settings: Settings, job_id: str, known: dict[str, Any]) -> dict[str, Any]:
