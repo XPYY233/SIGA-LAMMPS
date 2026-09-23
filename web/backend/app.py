@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -45,6 +47,11 @@ __all__ = ["Run", "create_app"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = REPO_ROOT / "web" / "frontend"
+
+#: A render that hangs must not pin a request forever. A trajectory is rendered
+#: one frame at a time, so anything approaching this bound is not slow work —
+#: it is a stuck process.
+RENDER_TIMEOUT_S = 240
 
 #: Files the browser needs for Area B. Everything else in the log is dropped
 #: rather than forwarded, so the UI cannot accidentally surface more than the
@@ -421,15 +428,13 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     async def visualize(run_id: str, name: str, frame: int | None = None) -> dict[str, Any]:
         """Render a structure file, returning the image URL and the observables.
 
-        OVITO runs in a worker thread: it is CPU-bound and holds a rendering
-        context, and doing it inline would stall every other request including
-        the activity stream that is meant to stay live.
+        The render runs in a **separate process**, not a worker thread. OVITO is
+        Qt-based and its importer is not thread-safe: driving it from
+        `asyncio.to_thread` segfaulted the whole console, which the launcher then
+        treated as a reason to shut the harness down as well. A child process
+        contains the blast radius — a crash costs one render, not the session.
         """
-        from adapter.visualize import (
-            VisualisationError,
-            is_visualisable,
-            render_structure,
-        )
+        from adapter.visualize import VisualisationError, is_visualisable
 
         run = _require(runs, run_id, resolved)
         candidate = (run.workspace / name).resolve()
@@ -447,13 +452,12 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
 
         output = run.workspace / ".siga-visual" / f"{candidate.name}.png"
         try:
-            result = await asyncio.to_thread(
-                render_structure, candidate, output, frame=frame
+            payload = await asyncio.to_thread(
+                _render_in_subprocess, candidate, output, frame
             )
         except VisualisationError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-        payload = result.to_dict()
         # Cache-busted, so re-rendering a file at a different frame is not served
         # from the browser's cache.
         payload["image_url"] = (
@@ -1076,6 +1080,79 @@ def _submit_remote(
             }
     except (HpcError, ConfigError) as exc:
         return {"submitted": False, "error": str(exc)}
+
+
+def _render_in_subprocess(source: Path, output: Path, frame: int | None) -> dict[str, Any]:
+    """Render via ``adapter.visualize_cli`` in a child process.
+
+    The child is the same interpreter, run from the repository root so the
+    adapter package is importable. Its exit status is interpreted rather than
+    collapsed into a boolean: a described failure and a crash are different
+    events with different remedies, and a negative return code is how a signal
+    death is reported — that is the signature of the OVITO threading crash this
+    exists to contain.
+    """
+    import subprocess
+
+    from adapter.visualize import VisualisationError
+
+    result_path = output.with_suffix(output.suffix + ".json")
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    if result_path.exists():
+        result_path.unlink()
+
+    argv = [
+        sys.executable,
+        "-m",
+        "adapter.visualize_cli",
+        str(source),
+        str(output),
+        "--result",
+        str(result_path),
+    ]
+    if frame is not None:
+        argv += ["--frame", str(frame)]
+
+    environment = dict(os.environ)
+    # OVITO renders offscreen; without this a headless render can try to reach a
+    # display and fail on a machine with no session.
+    environment.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(REPO_ROOT),
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=RENDER_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise VisualisationError(
+            f"OVITO 渲染超过 {RENDER_TIMEOUT_S} 秒仍未结束，已终止。"
+            "轨迹过大时请指定 --frame 只渲染一帧。"
+        ) from exc
+
+    if result_path.is_file():
+        try:
+            payload = json.loads(result_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise VisualisationError(f"渲染进程返回的结果无法解析：{exc}") from exc
+        finally:
+            result_path.unlink(missing_ok=True)
+        if not payload.get("ok"):
+            raise VisualisationError(payload.get("error") or "渲染失败")
+        return payload
+
+    if completed.returncode < 0:
+        raise VisualisationError(
+            f"OVITO 渲染进程崩溃（信号 {-completed.returncode}）。"
+            "这是 OVITO 的已知缺陷，不影响任务本身：脚本、日志与数值都完好，"
+            "只是这张图没能画出来。"
+        )
+    detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+    tail = detail[-1] if detail else "无输出"
+    raise VisualisationError(f"OVITO 渲染失败（退出码 {completed.returncode}）：{tail}")
 
 
 def _remote_leaf(run: Any, run_id: str) -> str:

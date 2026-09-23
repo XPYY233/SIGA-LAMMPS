@@ -66,6 +66,22 @@ def wait_for(port: int, *, seconds: float, label: str) -> bool:
     return False
 
 
+def _exit_description(returncode: int | None) -> str:
+    """Describe how a child ended, naming signals instead of negative numbers.
+
+    A segfault reports as -11 in Python. Printing "退出码 -11" invites the reader
+    to look for a bug in the child's own error handling, when the process never
+    got that far: it was killed. Naming the signal is the difference.
+    """
+    if returncode is None:
+        return "状态未知"
+    if returncode >= 0:
+        return f"退出码 {returncode}"
+    signals = {6: "SIGABRT（abort）", 9: "SIGKILL", 11: "SIGSEGV（段错误）", 15: "SIGTERM"}
+    number = -returncode
+    return f"被信号终止：{signals.get(number, f'信号 {number}')}"
+
+
 def load_api_key() -> str:
     """Environment first, then the harness's own credential store.
 
@@ -175,8 +191,18 @@ def main(argv: list[str] | None = None) -> int:
     # unread PIPE can block the child once it fills, and it hid every startup
     # error: a harness that died on a bad overlay looked identical to one that
     # never started.
+    #
+    # Opened for append, with a separator per session. Truncating on start
+    # destroyed the evidence of the previous run's death — which is exactly the
+    # evidence needed to find out why it died. The console's segfault was only
+    # diagnosable at all because macOS kept its own crash report.
     harness_log_path = REPO_ROOT / ".dsh-web" / "harness.log"
-    harness_log = open(harness_log_path, "w")
+    harness_log = open(harness_log_path, "a", encoding="utf-8")
+    harness_log.write(
+        f"\n===== harness start {time.strftime('%Y-%m-%d %H:%M:%S')} "
+        f"(port {args.harness_port}) =====\n"
+    )
+    harness_log.flush()
     harness = subprocess.Popen(
         ["node", "--import", "tsx/esm", "apps/cli/src/bin.ts", "web", "--patch", str(PATCH)],
         cwd=HARNESS_ROOT, env=harness_env,
@@ -220,20 +246,35 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     try:
-        # Wait on either child, so a crashed harness surfaces instead of leaving a
-        # console whose every panel is empty.
+        # Wait on either child, so a crashed one surfaces instead of leaving a
+        # half-dead pair nobody notices.
         while all(process.poll() is None for _, process in processes):
             time.sleep(1.0)
-        if any(process.poll() is not None for _, process in processes):
-            for name, process in processes:
-                if process.poll() is not None:
-                    print(f"\n{name} 已退出（退出码 {process.returncode}）。", file=sys.stderr)
-                    if name == "harness":
-                        # Point at the log rather than leaving the reader to guess.
-                        tail = harness_log_path.read_text(errors="replace").strip().splitlines()
-                        for line in tail[-8:]:
-                            print(f"  {line}", file=sys.stderr)
-                        print(f"  （完整输出：{harness_log_path}）", file=sys.stderr)
+
+        for name, process in processes:
+            if process.poll() is None:
+                continue
+            other = "console" if name == "harness" else "harness"
+            print(f"\n{name} 已退出：{_exit_description(process.returncode)}", file=sys.stderr)
+            if name == "harness":
+                tail = harness_log_path.read_text(errors="replace").strip().splitlines()
+                for line in tail[-8:]:
+                    print(f"  {line}", file=sys.stderr)
+                print(f"  （完整输出：{harness_log_path}）", file=sys.stderr)
+
+            # The surviving half is left running on purpose. Tearing it down
+            # turns one crash into a total outage, and it destroys the one thing
+            # still working: after a console segfault the harness was killed
+            # too, so an unrelated threading bug looked like "the harness keeps
+            # dying" and the evidence went with it.
+            if any(p.poll() is None for _, p in processes):
+                url = f"http://127.0.0.1:{args.console_port}"
+                print(
+                    f"\n{other} 仍在运行，未受影响："
+                    + (url if other == "console" else f"端口 {args.harness_port}")
+                    + "\n按 Ctrl-C 停止全部。",
+                    file=sys.stderr,
+                )
     except KeyboardInterrupt:
         pass
     finally:

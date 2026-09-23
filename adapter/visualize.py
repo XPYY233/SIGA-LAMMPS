@@ -157,7 +157,13 @@ def render_structure(
         table = analysed.tables.get("coordination-rdf")
         if table is not None:
             xy = table.xy()
-            if xy:
+            # `table.xy()` returns a NumPy array, and `if array:` raises
+            # "truth value of an array with more than one element is ambiguous".
+            # As a bare truth test it therefore did not merely take the wrong
+            # branch — it threw, and the except below turned that into a warning
+            # saying the observables had failed. So the RDF numbers were missing
+            # from every render, and the reason given was a NumPy internal.
+            if len(xy):
                 peak = max(xy, key=lambda row: row[1])
                 result.observables["rdf_points"] = len(xy)
                 result.observables["rdf_first_peak_r"] = round(float(peak[0]), 3)
