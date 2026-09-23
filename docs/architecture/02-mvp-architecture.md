@@ -146,15 +146,59 @@ integrators, the SLLOD Couette pattern, MSD compute syntax.
 
 ### R — Retrieval
 
-Three ChromaDB collections mirroring the paper: **example scripts**,
-**documentation RST**, **command syntax extracted from the source tree**.
+Three collections mirroring the paper: **example scripts** (1,089), **documentation
+RST** (4,977 chunks), **command syntax extracted from the source tree** (906).
+Total 6,972 documents, built from an official LAMMPS checkout in ~2 seconds.
 
-`build_index.py` ingests from a corpus root; the raw corpus is **not committed**
-(it is large, licensed upstream, and fetchable) — `data/raw/` is git-ignored and
-a documented `make corpus` step populates it. The index is rebuildable.
+**Backend deviation — this is BM25, not ChromaDB.** The paper used ChromaDB with
+dense embeddings, and this document originally specified the same. Two measured
+findings forced the change, and the second is a limitation worth stating plainly
+rather than burying:
 
-Tool: `search_lammps(query, k=5)` → `source`, `snippet`, `command`/`example`,
-`metadata`. The agent never walks the documentation tree.
+1. ChromaDB's default embedder downloads an **83 MB** ONNX archive on first use.
+   Here that transfer sustains ~20 KB/s and stalls; worse, ChromaDB re-downloads
+   whenever the archive fails its SHA256 check, so every embedding call paid the
+   failed download again. Indexing never completed a single batch, and the
+   symptom reads as "embedding is slow" rather than "the model is absent".
+2. A local hashing vectorizer was tried and rejected on measurement: ~431,000
+   distinct features hashed into 1024 dimensions is **~421 features per bucket**.
+   Rare discriminative terms drown in collisions — the literal phrase "mean
+   square displacement" ranked behind a timing utility. No dimension that fits in
+   memory repairs it, because the required width is the size of the feature space.
+
+BM25 is the right structure for lexical matching: a sparse inverted index with
+exact term statistics and no hashing, so there are no collisions to lose signal
+in. It needs no network, is deterministic, and is auditable end to end.
+
+**Measured quality, which bounds what R may claim in the ablation:**
+
+| Query | Outcome |
+|---|---|
+| `compute msd`, `fix deform`, `fix nvt/sllod`, `pair_style lj/cut` | top-1 correct |
+| `spherical indenter pressing into a surface` | `fix_indent` top-1 |
+| `stretch a box along one axis` | `fix_deform` **absent** from top-5 |
+| `thermostat to hold a constant temperature` | `nvt` **absent** from top-5 |
+
+So R serves command-vocabulary queries well — an agent that knows it needs
+`fix deform` and wants the syntax is served. It does **not** serve paraphrase, and
+the paper frames R as existing precisely *"for when the agent does not know the
+right simulator terms to search for"*. **This is a real shortfall against the
+paper, not a neutral implementation choice**, and it must be reported as such in
+any result: R's measured contribution here is a lower bound on the paper's R.
+Both misses are recorded as strict `xfail`s in `tests/test_retrieval.py`, so if
+either starts passing the suite fails and the limitation gets revisited.
+
+Closing the gap needs dense embeddings from a model that can actually be fetched.
+
+Corpus provenance is recorded per run. The corpus is an official LAMMPS checkout
+(`github.com/lammps/lammps`); it is **not committed** (large, upstream-licensed),
+so `data/` is git-ignored and the index is rebuilt with
+`python -m adapter.cli build-index`.
+
+Tool: `search_lammps(query, k=5)` → `source`, `collection`, `snippet`, `command`,
+`score`, `metadata`. The agent never walks the documentation tree. The backend
+is recorded with the index, because a retrieval result is not comparable across
+backends.
 
 ### X — Validator
 
@@ -248,21 +292,91 @@ Tools (all over MCP, no `hpc_run_shell`): `hpc_upload_workspace`,
 
 Frozen tasks (5 classes from the brief → the paper's 9-task set is the model):
 LJ melting, NVT equilibration, MSD diffusion, uniaxial tension, nanoindentation.
-Each has: NL specification, required files, expected key commands, reference
-input, validation criteria.
+Each has an NL specification, required files, expected key commands, a reference
+input, and validation criteria.
 
-Metrics per the brief: input completeness, deterministic validation pass rate,
-LAMMPS initialization success, LAMMPS execution success, parameter correctness,
-runtime, agent tool calls, LLM token usage, failure category.
+**Evaluation follows the mandated four-level model** (`docs/design-principles.md`
+§7), *not* the paper's two-stage metric. The paper scored structural similarity
+plus an LLM judge; the principles forbid treating reference similarity as the
+primary metric, because functionally equivalent LAMMPS scripts legitimately
+differ in IDs, naming, ordering, and numerical settings.
 
-Two evaluation stages as in the paper: **stage 1 structural** (deterministic,
-11–15 per-task criteria) and **stage 2 value correctness**. The paper used an
-LLM judge for stage 2; we additionally have something the paper did not — real
-execution — so "did LAMMPS actually initialize and run" becomes a hard,
-non-LLM signal.
+| Level | Question | Mechanism |
+|---|---|---|
+| 1 Static | Is the workspace structurally sound? | the X validator, unchanged — one implementation, no second copy for scoring |
+| 2 Runtime | Does it actually run? | real LAMMPS + SLURM; non-LLM and hard |
+| 3 Task compliance | Is it running the task that was asked for? | deterministic per-task checkers (ensemble, target T, duration, observable computed **and** output, structure/potential actually used) |
+| 4 Physical sanity | Are results physically plausible? | bounded automatic checks; anything else is marked `human_review_required` |
 
-The four configs are the four presets, driven through the same headless path with
-identical tasks, model, and inference settings.
+**Level 4 is not a correctness claim.** An LLM may not assert physical validity
+without a reliable basis; where the check is unreliable the run is marked for
+human review rather than scored.
+
+**Level 1 doubles as X.** Scoring does not reimplement the validator: the
+benchmark calls the same `adapter/cli.py validate` that the agent's tool and the
+S gate call. Divergence between "what the agent was told" and "what it was
+scored on" would make the whole ablation uninterpretable.
+
+**Ground truth is a reference, not the answer.** It is used for task
+construction, expected commands and settings, compliance checking, debugging, and
+controlled comparison. A script that differs textually but is runtime-successful,
+task-compliant, and physically sane is **not** a failure.
+
+**Failure taxonomy** (`docs/design-principles.md` §9), recorded per run rather
+than collapsed into one score:
+
+```
+knowledge_error      syntax_error          command_order_error
+missing_command      missing_file          bad_parameter
+wrong_units          wrong_ensemble        invalid_reference
+premature_termination runtime_error         physical_instability
+task_noncompliance   unknown
+```
+
+**Audit record** per run (§11): task_id, run_id, model and settings, adapter
+configuration, M version/hash, retrieval results, tool calls, validator results,
+termination attempts, generated files, SLURM script, job ID, LAMMPS log, runtime
+status, evaluation results (all four levels), token usage, wall-clock time,
+failure category. Any failure must answer *what failed, and at which layer* —
+not `score = 0`.
+
+**Most of that record is already an artefact we can just keep.** The harness
+exposes `GET /api/session.export?sessionId=…&includeDescendants=true`, which
+returns a ZIP of the entire session lineage (route at
+`apiproxy/src/fetch/handler.ts:260`; `includeDescendants` in
+`api/downloads.schema.ts:21`). That ZIP carries the tool calls, validator
+results, termination attempts and token usage as durable logged facts, so the
+evaluator **archives it per run** instead of reconstructing those from a live
+stream. Reconstruction would be both more code and less trustworthy: the log is
+the source of truth, and a reimplementation of it is a second opinion.
+
+Only the fields the harness has no reason to know are added on top — `run_id`,
+the task id, the adapter configuration, the SLURM script and job id, wall-clock
+time, and the failure category.
+
+**Benchmark runs can be driven and parallelised over plain HTTP.** Alongside the
+twelve `session.*` methods, the RPC surface exposes four `subagent.*` methods —
+`list`, `history`, `prompt`, `interrupt` (`apiproxy/src/api/rpc-map.ts:37-40`).
+An external driver speaking `POST /api/<method>` can therefore spawn, message and
+interrupt nested sessions without the SDK's stdio path. This matters because the
+controlled-comparison invariants require isolated runs per configuration: each
+of the four presets gets its own session and workspace, and the driver can run
+them concurrently rather than serially.
+
+Note the interaction with the missing stream resume: because `since` is ignored,
+a reconnecting Area B reader must re-read `session.history` and reconcile by
+`seq`. `session.history` returns `{ events, hasMore, projections? }`, so paging
+backwards is supported and a gap is recoverable rather than permanent.
+
+**Controlled comparison invariants** (§10): same model and version, same harness,
+same specification, same benchmark, same available files, same HPC environment,
+same resource limits, same inference settings, **same maximum trajectory
+budget**, same evaluation pipeline. The four presets make the adapter
+configuration the only intended variable.
+
+Reported as *capability* versus *reliability floor*, not as a single aggregate:
+the core question is whether DeepSeekHarness already authors LAMMPS capably while
+failing unreliably, and which failure modes each of M, R, X, S reduces.
 
 ### Web app
 
@@ -301,19 +415,47 @@ Two consequences, one enabling and one requiring care:
   without adding real authentication would hand out that capability, and the
   harness has already told us it will not stop us.
 
-### Transport: the event stream is SSE, not WebSocket
+### Transport: the event stream is WebSocket, not SSE
 
-An earlier note in this project recorded these as WebSocket downlinks. That is
-wrong. `packages/host/apiproxy/src/fetch/handler.ts:252-258` comments the routes
-as *"No-envelope read channels (SSE GET streams + host-only download)"* and
-answers them with `sseResponse(...)`, which emits
-`content-type: text/event-stream` with `data: <json>\n\n` framing
-(`handler.ts:205-235`). `registerUpgrade` — the WebSocket path — appears only in
-a webserver invariant probe, never for events.
+**This section previously claimed the opposite. Recording the correction because
+the mistake is instructive:** I read `packages/host/apiproxy/src/fetch/handler.ts`
+in isolation — it genuinely does answer these paths with `sseResponse(...)` and
+`content-type: text/event-stream` — without checking *which carrier mounts it for
+a browser*. Reading a file is not the same as reading the wiring.
 
-Practical effect: Area B is consumed with a plain streaming HTTP GET
-(`httpx` in Python), not a WebSocket client. The stream opens with a
-`: connected` comment line so an idle channel is visibly alive.
+There are **two carriers**, and only one is reachable over the network:
+
+| Carrier | Used by | Event transport |
+|---|---|---|
+| `toFetchHandler` + `InProcessApiClient` | in-process clients | SSE — never touches the network |
+| `WebSocketDownlinks` via HTTP upgrade | the browser | **WebSocket** |
+
+The decisive code is `packages/client/connection/src/index.ts:150-155`, which
+intercepts a plain GET **before** it can reach the fetch handler:
+
+```ts
+if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
+  return new Response('upgrade required', {
+    status: 426,
+    headers: { connection: 'Upgrade', upgrade: 'websocket' },
+  })
+}
+```
+
+The upgrade routes are registered at `:193-194`, and `api-path.ts:11,14` names
+them outright: *"Browser mux-frame **WebSocket** pathname"*. Frames arrive as
+JSON `{ type: 'server-request', rpcId, method, payload }`
+(`websocket-downlink.ts:16-24`).
+
+**Practical effect — the split is per route, not per server:**
+
+- `POST /api/<method>` RPC — plain HTTP, `application/json` (else 415). Unchanged,
+  and `session.create`/`session.prompt` work exactly as this document assumes.
+- `GET /api/events.mux` — **WebSocket upgrade only**; a plain GET returns 426.
+
+So Area B needs a WebSocket client (`websockets` in Python), not an `httpx`
+streaming GET. Building it the other way would have produced a 426 that reads
+like an auth or routing failure rather than a protocol mismatch.
 
 **Area B shows tool calls, statuses, short action summaries, and validator
 feedback — never hidden chain-of-thought.** We forward only what the session log
@@ -347,8 +489,87 @@ rather than merely confirming them.
 | Network sandbox | **None.** `sandbox/src/index.ts:25`: *"Network and process visibility are outside this vocabulary."* No egress allowlist | HPC confinement cannot come from an OS sandbox. It comes from having no `hpc_run_shell` at all — fixed-function tools are the enforcement |
 | Env / config | `.env` loading is narrow: only `<cwd>/.env` and `$DSH_HOME/.env`, read-only, and it feeds the **credentials** domain | The harness will *not* read our `.env` for its own config. The MCP server receives settings through the `mcp-client` row's `env:` block (`!!js process.env.X`), or reads `.env` itself |
 | Out-of-tree client UI | The `clientBundle()` tsdown preset is **not published**; a bundle-purity gate rejects cross-plugin value imports | **Validates Option B.** Building the three Areas as in-GUI client plugins would fight unpublished packaging |
-| Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | **Validates Option B.** Area C's job card needs our own UI; the harness can only render `generic`/`terminal`/`diff`/`search`/`read`/`web` |
+| Tool card vocabulary | `ToolCallView`/`ToolResultView` are **closed unions** (`presentation.ts:41`, `:141`) — `card: 'job'` is not addable out-of-tree | Narrower than this document first claimed. It blocks a custom *tool card*, not custom UI: see the correction below |
 | Host HTTP routes | `ctx.webServer.register({ kind: 'exact'\|'prefix', path, handler })` (`webserver/src/index.ts:59`) is the sanctioned out-of-tree route | Available if a host-half route is ever needed; our FastAPI app is independent of it |
+| S firing boundary | The gate runs only at the **natural stop boundary**: `agent-loop/src/agent.ts:294-299` gates on `turnEnds`, and a step that emitted tool calls leaves `turnEnds === null`, skipping it | Correct semantics for a Stop hook — S judges a *finished* attempt, not a mid-loop state. S never sees a half-written script. |
+| S loop guard | `hooks-claude-code` hard-codes `stop_hook_active: false` and its README records `TODO(stop-loop-guard)`; `core/agent-loop/README.md:134` states *"No built-in turn budget"* | Confirms S **must** self-limit. Our `MAX_BLOCKS` budget is not defensive padding; without it an ungated validator loops forever. |
+| Plugin-owned state | `ctx.storageDomain` + `defineDomain` give a plugin a KV domain, independent of the session log | The durable option for S's block counter if it ever needs to survive a restart. v1 keeps it in memory — per-turn state does not outlive a turn. |
+| Benchmark driver | TS SDK is full-featured: `DeepSeekHarness.run()` with `onNotification` (`packages/sdk/client/src/api.ts:22`, `:98`). The **Python SDK is sessions-only** — no subagent or plugin API | Decides D2's benchmark path: drive headless via the harness CLI, or the TS SDK. Not the Python SDK. |
+| **SDK cannot gate a turn** | Both SDKs expose only `initialize` / `session/prompt` / `shutdown` plus four notifications. They can **observe** a run but cannot **block** a turn's completion | **This is why D3 is forced, not merely convenient.** `S` has no out-of-process form: an external driver can detect a bad script only *after* the turn ended, which is post-hoc re-prompting, not the paper's termination condition. S must be an in-process plugin. |
+| Cancellation, per path | HTTP RPC exposes `session.cancel` (and `session.attachment`, `session.history`). The SDK's stdio protocol exposes **no** cancellation and no client→server notifications | Option B's web app speaks HTTP RPC, so the brief's "the user can cancel a job" is satisfiable. Had we driven everything through the SDK, it would not be. |
+| Headless CLI flags | `dsh --profile headless "task"` prints the final assistant text and exits 0/1. There is **no `--json` / `--print` flag** | Benchmark metrics come from the **session log**, not from CLI stdout. That is already how the evaluator is designed. |
+
+### Correction: the harness *can* render custom UI out-of-tree
+
+An earlier version of this document claimed the closed card vocabulary meant Area
+C's job card could not be rendered by the harness at all, and cited that as
+partly validating Option B. **That was too strong.** Verified against source:
+
+`ConversationNodeDefinition.match(event: SessionEvent)` is invoked against
+**every raw session event** by the engine
+(`packages/client/runtime/src/client/contract/conversation.d.ts:160`, registered
+through `ctx.conversationEvents.register(...)`). So a client plugin has a
+supported, documented surface that sees the full durable event stream and can
+derive arbitrary UI from it.
+
+What is actually true: the closed union prevents a custom *tool card* — you
+cannot add `card: 'job'` — but a `ConversationNodeDefinition` renders whatever it
+likes. The constraint is narrower than I wrote.
+
+**Option B still stands**, on the reasons that were load-bearing rather than this
+one: `S` must be in-process (the SDK cannot gate a turn), the web app owns Areas
+A and C end to end, and `clientBundle()` is unpublished out-of-tree. The claim
+about card vocabulary was decoration, and decoration that was wrong.
+
+### WebSocket implementation facts for Area B
+
+Recorded because each is easy to get wrong in a way that looks like a different
+failure:
+
+- **The socket is downlink-only.** Any inbound frame is answered with
+  `close(1008, 'downlink only')` (`websocket-downlink.ts:109-111`). Upstream
+  traffic is HTTP `POST` only. A client that tries to send a subscribe message
+  gets a closed socket, not an error.
+- **Frame envelope**: every frame is
+  `{ type: 'server-request', rpcId, method, payload }` where `method` is the
+  payload's own `type`. Durable events arrive as
+  `{ type: 'session/event', sessionId, event: SessionEvent, view? }`, and
+  `SessionEvent = { type, seq, time, data, ignorable?, surfaceOp?, sourceEventSeqs? }`.
+- **No resume.** `events.mux` accepts a `since` map and **ignores it** —
+  documented as *"unimplemented in v1"*, with reconnection meaning "reopen the
+  stream" (`packages/host/apiproxy/src/api/events.ts:53`). So a dropped
+  connection is not replayable: Area B must re-read `session.history` after a
+  reconnect and reconcile by `seq`, or it will silently show a gap.
+
+### Consequence of D1 (MCP tools) for long-running HPC work
+
+The harness has a good background-job facility — `ctx.jobs.start({ kind, label,
+owner, run })` returning `{ cancel, done, readOutput }`, plus `onJobDone` →
+`followup` to re-wake an idle agent within `maxConsecutiveWakes` (default 3).
+
+**Our tools cannot use it.** `ctx.jobs` is an in-process service; an MCP tool runs
+in the Python adapter, outside the harness. So an HPC tool call occupies the turn
+inline for its whole duration. Two facts make that acceptable rather than a
+problem, and one makes it a design constraint:
+
+- `hpc_submit_job` **returns as soon as `sbatch` does**, handing back a job id. It
+  never waits for the job. A tool call is therefore seconds, not hours.
+- `hpc_job_status` is a cheap poll that returns immediately.
+- **Nothing polls on the agent's behalf.** There is no scheduler that resumes a
+  job without a model-issued call, so progress requires the agent to poll or the
+  web app (Area C) to poll and display. The benchmark must not assume background
+  progress; it measures what the agent actually did.
+
+Two harness facts also bound what the benchmark may claim:
+
+- **`timeoutMs` is advisory, not a hard kill.** The timeout policy only notifies
+  via `AbortSignal`, and the registry documents that it "cannot hard-kill
+  same-process code". A benchmark cannot rely on a tool timeout to bound a
+  wedged call; the real bound is an explicit wall-clock budget in the evaluator
+  plus, for the MCP path, the client row's own `toolCallTimeoutMs`.
+- **No tool API extends a turn.** `ToolRunContext` offers only `deferContext()`
+  and `concludeTurn()`; `concludesTurn` exists on success only. This is the
+  inverse control S deliberately does not use.
 
 ## Build order (each step tested before the next)
 

@@ -1,0 +1,29 @@
+# NVT equilibration — reference implementation.
+#
+# Tdamp is a TIME constant, so it must scale with the timestep. 0.4 / 0.004 =
+# 100 timesteps, which lets the thermostat act without oscillating. Using a
+# literature value of 100.0 here would mean 25000 timesteps and the system would
+# never reach its target.
+
+units           lj
+atom_style      atomic
+boundary        p p p
+
+lattice         fcc 0.8
+region          box block 0 6 0 6 0 6
+create_box      1 box
+create_atoms    1 box
+mass            1 1.0
+
+pair_style      lj/cut 2.5
+pair_coeff      1 1 1.0 1.0 2.5
+
+velocity        all create 1.0 4928459 loop geom
+neighbor        0.3 bin
+neigh_modify    delay 0 every 20 check no
+
+fix             1 all nvt temp 1.0 1.0 0.4
+timestep        0.004
+thermo          200
+thermo_style    custom step temp press etotal
+run             20000

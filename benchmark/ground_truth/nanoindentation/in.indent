@@ -1,0 +1,59 @@
+# Nanoindentation with a spherical indenter — reference implementation.
+#
+# Four details matter, and the last two are invisible without running it.
+#
+#   * A free surface in z (boundary p p f) is required: with periodic z there is
+#     no surface and the indenter presses into bulk material.
+#   * Atoms are created only in the substrate, leaving vacuum for the indenter.
+#   * The bottom layer is ANCHORED. With a free z boundary both z faces are open,
+#     so an unanchored slab starting at z = 0 bleeds atoms out of the bottom.
+#     LAMMPS reports "Lost atoms: original 648 current 624" and the static
+#     validator sees nothing wrong. This is Level 2 work, not Level 1.
+#   * The indenter starts just above the surface, with a force constant suited to
+#     reduced Lennard-Jones units. K = 1000 is enormous here.
+
+units           lj
+atom_style      atomic
+boundary        p p f
+
+lattice         fcc 0.85
+
+# 6 x 6 x 12 lattice units = 10.06 x 10.06 x 20.11 LJ. The z headroom is the
+# vacuum the indenter descends through.
+region          box block 0 6 0 6 0 12
+create_box      1 box
+
+# Substrate: 0..4 lattice units in z = 0..6.70 LJ.
+region          substrate block 0 6 0 6 0 4
+create_atoms    1 region substrate
+mass            1 1.0
+
+pair_style      lj/cut 2.5
+pair_coeff      1 1 1.0 1.0 2.5
+
+# The lower lattice unit is held fixed, as in a real indentation experiment
+# where the specimen rests on a rigid base. Everything above it is free.
+region          base block 0 6 0 6 0 1
+group           base region base
+group           mobile subtract all base
+
+velocity        mobile create 0.3 4928459 loop geom
+velocity        base set 0.0 0.0 0.0
+fix             hold base setforce 0.0 0.0 0.0
+
+neighbor        0.3 bin
+neigh_modify    delay 0 every 20 check no
+
+# The indenter centre starts at z = 11.8 LJ, so with radius 5.0 its lowest point
+# sits just above the substrate top at 6.70. It descends 0.0002 per step.
+variable        zind equal 11.8-0.0002*step
+
+# Thermostat the mobile substrate throughout: an unthermostatted substrate heats
+# locally and softens, corrupting the force response being measured.
+fix             1 mobile nvt temp 0.3 0.3 0.3
+fix             2 mobile indent 10.0 sphere 5.027 5.027 v_zind 5.0
+
+timestep        0.003
+thermo          100
+thermo_style    custom step temp pe etotal f_2[1] f_2[2] f_2[3]
+run             3000

@@ -1,0 +1,108 @@
+id: uniaxial_tension
+title: Uniaxial tension with lateral relaxation
+summary: Pull a crystal along one axis while letting the other two relax.
+
+specification: |
+  Perform a uniaxial tensile test on a three-dimensional Lennard-Jones crystal.
+  Use reduced Lennard-Jones units and a face-centred cubic lattice at a reduced
+  density of 0.85. Deform the simulation box along z at a constant engineering
+  strain rate of 0.001 per reduced time unit, while holding the temperature at
+  0.5 and allowing the x and y directions to relax to zero pressure.
+  Use a timestep of 0.005 and a Nose-Hoover thermostat, and report the
+  temperature, pressure and total energy every 100 steps.
+
+reference: uniaxial_tension/in.tension
+
+required_files:
+  - in.*
+
+level1:
+  required_commands: [units, atom_style, lattice, region, create_box, create_atoms, pair_style, pair_coeff, velocity, fix, timestep, thermo, run]
+  required_patterns:
+    - id: units_lj
+      description: "reduced Lennard-Jones units are requested"
+      pattern: '^\s*units\s+lj\b'
+    - id: atom_style_atomic
+      description: "point particles only; nothing here has bonds or charge"
+      pattern: '^\s*atom_style\s+atomic\b'
+    - id: pair_style_lj
+      description: "a truncated Lennard-Jones interaction"
+      pattern: '^\s*pair_style\s+lj/cut\b'
+    - id: periodic_in_deformation_direction
+      pattern: '^\s*boundary\s+p\s+p\s+p\b'
+      description: fix deform requires a periodic dimension to deform
+
+level3:
+  - id: box_deformed
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+deform\b'
+    description: the requested deformation must actually be applied
+  - id: strain_rate
+    kind: regex_value
+    command: deform
+    token: 'erate'
+    # `fix ... deform N z erate <rate>`: the rate is one past the token.
+    # This key was previously absent, so the offset defaulted to 0 and
+    # compared the literal word 'erate' against the expected number.
+    value_index: 1
+    expected: 0.001
+    tolerance: 0.0002
+    description: the specified engineering strain rate
+  - id: barostat_couples_only_lateral_axes
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+npt\s+.*\b(x|y)\s+0(\.0)?\s+0(\.0)?\s+'
+    description: >
+      The barostat must not also control the deformed axis, or the strain is
+      applied twice and the measured stress is wrong.
+  - id: temperature_controlled
+    description: "a tensile test still needs a thermostat or barostat"
+    kind: regex_any
+    patterns: ['\bnvt\b', '\bnpt\b']
+  - id: target_temperature
+    kind: pattern_number
+    command: velocity
+    argument: 2
+    expected: 0.5
+    tolerance: 0.05
+  - id: timestep
+    kind: pattern_number
+    command: timestep
+    argument: 0
+    expected: 0.005
+    tolerance: 0.0
+  - id: run_length_sufficient
+    description: "the strain rate needs enough steps to reach a meaningful strain"
+    kind: run_steps_min
+    minimum: 2000
+
+level4:
+  - id: lateral_pressure_relaxed
+    kind: log_range
+    column: Press
+    after_fraction: 0.3
+    min: -5.0
+    max: 5.0
+    description: with lateral coupling, the reported pressure should stay near zero
+  - id: no_atom_loss
+    kind: log_forbidden
+    pattern: 'Lost atoms|Out of range atoms'
+    description: pulling too fast, or at too large a timestep, tears the crystal apart
+  # `E_pair` is a valid LAMMPS keyword but is not printed by any standard
+  # `thermo_style`, so a check naming it could never be decided — it reported
+  # "needs human review" on every run, including correct ones, forever. `PotEng`
+  # is the standard column for the same quantity on these single-interaction
+  # systems, so the check now has something to read.
+  - id: energy_finite
+    description: "no NaN or infinity in the energy columns"
+    kind: log_finite
+    columns: [TotEng, PotEng]
+  - id: stress_strain_response
+    kind: human_review_required
+    description: >
+      Whether the stress-strain curve is physical (elastic slope, yield point)
+      requires a computed stress and a chosen analysis window.
+
+notes: >
+  Two coupled mistakes are common here: letting the barostat also control the
+  deformed axis, and deforming too fast for the timestep, which shocks the
+  crystal rather than straining it.

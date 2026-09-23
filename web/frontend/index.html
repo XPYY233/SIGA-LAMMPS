@@ -1,0 +1,756 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIGA-LAMMPS · 模拟任务控制台</title>
+<style>
+  /* GitHub 暗色主题取值 */
+  /* GitHub 暗色（默认） */
+  :root{
+    --canvas:#0d1117; --surface:#161b22; --surface2:#21262d;
+    --border:#30363d; --border-muted:#21262d;
+    --fg:#e6edf3; --fg-muted:#7d8590; --fg-subtle:#6e7681;
+    --accent:#2f81f7; --accent-emphasis:#1f6feb;
+    --success:#3fb950; --attention:#d29922; --danger:#f85149; --done:#a371f7;
+    --hover:#30363d; --hover-border:#8b949e;
+    --on-accent:#04260f; --focus-ring:rgba(31,111,235,.3);
+    --tint-success:rgba(63,185,80,.12); --tint-danger:rgba(248,81,73,.09);
+    --tint-gate:rgba(210,153,34,.08); --tint-border:rgba(240,246,252,.1);
+    color-scheme:dark;
+  }
+  /* GitHub 浅色 */
+  :root[data-theme="light"]{
+    --canvas:#ffffff; --surface:#f6f8fa; --surface2:#eaeef2;
+    --border:#d0d7de; --border-muted:#d8dee4;
+    --fg:#1f2328; --fg-muted:#59636e; --fg-subtle:#818b98;
+    --accent:#0969da; --accent-emphasis:#0969da;
+    --success:#1a7f37; --attention:#9a6700; --danger:#cf222e; --done:#8250df;
+    --hover:#eaeef2; --hover-border:#afb8c1;
+    --on-accent:#ffffff; --focus-ring:rgba(9,105,218,.3);
+    --tint-success:rgba(26,127,55,.10); --tint-danger:rgba(207,34,46,.07);
+    --tint-gate:rgba(154,103,0,.08); --tint-border:rgba(27,31,36,.15);
+    color-scheme:light;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--canvas); color:var(--fg);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,
+         "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  code,pre,.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,
+         "Liberation Mono",monospace}
+  header{
+    display:flex; align-items:center; gap:12px;
+    padding:12px 20px; background:var(--surface);
+    border-bottom:1px solid var(--border);
+  }
+  header h1{font-size:15px; font-weight:600; margin:0}
+  .badge{font-size:11px; color:var(--fg-muted); border:1px solid var(--border);
+         border-radius:999px; padding:1px 9px}
+  .health{margin-left:auto; display:flex; align-items:center; gap:7px;
+          font-size:12px; color:var(--fg-muted)}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--fg-subtle); flex:0 0 auto}
+  .dot.ok{background:var(--success); box-shadow:0 0 0 3px var(--tint-success)}
+  .dot.bad{background:var(--danger); box-shadow:0 0 0 3px var(--tint-danger)}
+  main{display:grid; grid-template-columns:minmax(300px,1fr) minmax(360px,1.3fr) minmax(320px,1.1fr);
+       gap:1px; background:var(--border); min-height:calc(100vh - 49px)}
+  section{background:var(--canvas); padding:16px 18px; display:flex; flex-direction:column;
+          min-width:0; min-height:0}
+  h2{font-size:12px; font-weight:600; letter-spacing:.6px; color:var(--fg-muted);
+     margin:0 0 10px; text-transform:uppercase}
+  h2 .zh{color:var(--fg); text-transform:none; letter-spacing:0; font-size:13px; margin-left:7px}
+  textarea,input[type=file],select,button{
+    font:inherit; color:var(--fg); background:var(--surface);
+    border:1px solid var(--border); border-radius:6px; padding:7px 10px; width:100%;
+  }
+  textarea{min-height:104px; resize:vertical; line-height:1.55}
+  textarea:focus,select:focus{outline:none; border-color:var(--accent-emphasis);
+    box-shadow:0 0 0 3px var(--focus-ring)}
+  button{width:auto; cursor:pointer; font-weight:500; padding:6px 14px;
+    background:var(--surface2); border-color:var(--border); color:var(--fg);
+    transition:background .12s,border-color .12s}
+  button:hover:not(:disabled){background:var(--hover); border-color:var(--hover-border)}
+  button.primary{background:var(--success); border-color:var(--tint-border);
+    color:var(--on-accent); font-weight:600}
+  button.primary:hover:not(:disabled){filter:brightness(1.08)}
+  button.danger{color:var(--danger)}
+  button.ghost{font-size:12px; padding:3px 10px}
+  button.danger:hover:not(:disabled){background:var(--danger); color:#fff; border-color:var(--danger)}
+  button:disabled{opacity:.45; cursor:not-allowed}
+  .row{display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap}
+  .field{margin-top:12px}
+  .field > label{display:block; font-size:12px; color:var(--fg-muted); margin-bottom:5px}
+  .hint{font-size:12px; color:var(--fg-subtle); margin-top:6px; line-height:1.5}
+  pre{background:var(--surface); border:1px solid var(--border); border-radius:6px;
+      padding:10px 12px; margin:0; overflow:auto; font-size:12px; line-height:1.55}
+  #activity{flex:1 1 auto; overflow:auto; min-height:240px; max-height:64vh;
+            border:1px solid var(--border); border-radius:6px; background:var(--surface); padding:8px}
+  .ev{border-left:3px solid var(--border); padding:5px 0 5px 10px; margin-bottom:3px;
+      font-size:12.5px; border-radius:0 4px 4px 0}
+  .ev:hover{background:var(--surface2)}
+  .ev .meta{font-size:11px; color:var(--fg-subtle); display:flex; gap:8px; align-items:center}
+  .ev .body{margin-top:2px; word-break:break-word; white-space:pre-wrap}
+  .ev.tool{border-left-color:var(--accent)}
+  .ev.ok{border-left-color:var(--success)}
+  .ev.err{border-left-color:var(--danger)}
+  .ev.gate{border-left-color:var(--attention); background:var(--tint-gate)}
+  .ev.sys{border-left-color:var(--done)}
+  .tag{font-size:10.5px; border:1px solid var(--border); border-radius:999px;
+       padding:0 7px; color:var(--fg-muted)}
+  .tag.tool{color:var(--accent); border-color:rgba(47,129,247,.4)}
+  .tag.gate{color:var(--attention); border-color:rgba(210,153,34,.4)}
+  .tag.err{color:var(--danger); border-color:rgba(248,81,73,.4)}
+  .tag.ok{color:var(--success); border-color:rgba(63,185,80,.4)}
+  .empty{color:var(--fg-subtle); font-size:12.5px; padding:14px 4px; text-align:center}
+  /* 组件徽章：让"哪个 SIGA 部件在起作用"一眼可见 */
+  .comp{font-size:10.5px; font-weight:700; border-radius:5px; padding:1px 6px;
+        border:1px solid var(--border); min-width:26px; text-align:center; display:inline-block}
+  .comp.M{color:var(--done); border-color:var(--done); background:rgba(163,113,247,.12)}
+  .comp.R{color:var(--accent); border-color:var(--accent); background:rgba(47,129,247,.12)}
+  .comp.X{color:var(--success); border-color:var(--success); background:rgba(63,185,80,.12)}
+  .comp.S{color:var(--attention); border-color:var(--attention); background:rgba(210,153,34,.14)}
+  .comp.HPC{color:#db6d28; border-color:#db6d28; background:rgba(219,109,40,.12)}
+  .ev .what{font-weight:500}
+  .ev .why{color:var(--fg-subtle); font-size:11.5px; margin-top:2px; line-height:1.5}
+  .ev .arg{font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11.5px;
+           background:var(--surface2); border:1px solid var(--border-muted); border-radius:4px;
+           padding:2px 6px; margin-top:4px; display:block; white-space:pre-wrap;
+           word-break:break-all; max-height:88px; overflow:auto}
+  .vsum{margin-top:4px; font-size:11.5px}
+  .vsum .ok{color:var(--success)} .vsum .bad{color:var(--danger)}
+  .ev.gate{box-shadow:inset 3px 0 0 var(--attention)}
+  .parts{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px}
+  .part{display:flex; align-items:center; gap:5px; border:1px solid var(--border);
+        border-radius:6px; padding:3px 8px; font-size:11.5px; color:var(--fg-subtle);
+        background:var(--surface)}
+  .part.on{color:var(--fg); border-color:var(--border)}
+  .part .n{font-variant-numeric:tabular-nums; color:var(--fg-muted)}
+  .part.off{opacity:.4}
+  #runhead{font-size:12px; color:var(--fg-muted); border:1px solid var(--border);
+           border-radius:6px; padding:7px 10px; background:var(--surface); margin-bottom:8px;
+           line-height:1.6}
+  #runhead .on{color:var(--fg)}
+  .status-line{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+               font-size:12.5px; color:var(--fg-muted)}
+  .pill{font-size:11.5px; border-radius:999px; padding:1px 9px;
+        border:1px solid var(--border); color:var(--fg-muted); white-space:nowrap}
+  .pill.completed{color:var(--success); border-color:rgba(63,185,80,.5); background:var(--tint-success)}
+  .pill.failed{color:var(--danger); border-color:rgba(248,81,73,.5); background:var(--tint-danger)}
+  .pill.running,.pill.pending{color:var(--attention); border-color:rgba(210,153,34,.5);
+        background:var(--tint-gate)}
+  .files{margin-top:6px; max-height:340px; overflow:auto; border:1px solid var(--border);
+         border-radius:6px; background:var(--surface)}
+  .files .f{padding:5px 10px; font-size:12px; cursor:pointer; display:flex;
+            justify-content:space-between; gap:10px; border-bottom:1px solid var(--border-muted)}
+  .files .f:last-child{border-bottom:none}
+  .files .f:hover{background:var(--surface2); color:var(--accent)}
+  .files .f .sz{color:var(--fg-subtle); font-size:11px}
+  /* 远端文件行：名字占满剩余宽度，大小与按钮靠右，长名字不会把按钮挤走 */
+  .files .f > span:first-child{flex:1; min-width:0; overflow:hidden;
+                               text-overflow:ellipsis; white-space:nowrap}
+  .files .f .acts{display:flex; gap:4px; flex:none}
+  .files .f .acts button{padding:1px 7px; font-size:11px; border-radius:5px;
+                         background:var(--surface2); color:var(--fg); border:1px solid var(--border)}
+  .files .f .acts button:hover{border-color:var(--accent); color:var(--accent)}
+  .sub{margin-top:16px}
+  #viz img{max-width:100%; border:1px solid var(--border); border-radius:6px; margin-top:6px}
+  .vizmeta{margin-top:6px; font-size:12px; color:var(--fg-muted); line-height:1.6}
+  .vizmeta b{color:var(--fg)}
+  .files .f .eye{color:var(--accent); margin-right:5px}
+  table.thermo{width:100%; border-collapse:collapse; font-size:11.5px; margin-top:6px;
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  table.thermo th,table.thermo td{padding:3px 7px; text-align:right; white-space:nowrap;
+                border-bottom:1px solid var(--border-muted)}
+  table.thermo th{color:var(--fg-muted); font-weight:600; text-align:right;
+                border-bottom:1px solid var(--border)}
+  table.thermo td:first-child,table.thermo th:first-child{text-align:left}
+  table.thermo tr:last-child td{color:var(--fg); font-weight:600}
+  .rlist{margin-top:6px; font-size:12px}
+  .rlist div{padding:1px 0; color:var(--fg-muted)}
+  .alert{border:1px solid var(--border); border-left:3px solid var(--danger);
+         border-radius:6px; padding:8px 10px; font-size:12.5px;
+         background:var(--tint-danger); margin-top:10px; line-height:1.6}
+</style>
+</head>
+<body>
+<header>
+  <h1>SIGA-LAMMPS</h1>
+  <span class="badge">M · R · X · S</span>
+  <button id="theme" class="ghost" title="切换浅色 / 深色">🌙 深色</button>
+  <span class="health"><span id="hdot" class="dot"></span><span id="htxt">正在检测 harness…</span></span>
+</header>
+
+<main>
+  <section>
+    <h2>A<span class="zh">模拟需求</span></h2>
+    <textarea id="request" placeholder="用自然语言描述你想要的 LAMMPS 模拟。例如：把三维 Lennard-Jones 晶体从 FCC 点阵熔化，约化密度 0.8442，温度 1.2，时间步长 0.005。"></textarea>
+    <div id="reqwarn" class="alert" style="display:none">
+      请填写需求描述，或选择一个 benchmark 任务。生成前必须有一个明确的任务。
+    </div>
+    <div class="field">
+      <label for="task">Benchmark 任务（可选 —— 选中后使用冻结的标准规格）</label>
+      <select id="task">
+        <option value="">不使用 —— 用我自己的描述</option>
+        <option value="lj_melt">lj_melt · Lennard-Jones 熔化</option>
+        <option value="nvt_equilibration">nvt_equilibration · NVT 平衡</option>
+        <option value="msd_diffusion">msd_diffusion · 均方位移扩散</option>
+        <option value="uniaxial_tension">uniaxial_tension · 单轴拉伸</option>
+        <option value="nanoindentation">nanoindentation · 纳米压痕</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="config">Adapter 配置</label>
+      <select id="config">
+        <option value="vanilla">vanilla —— 无 adapter</option>
+        <option value="m">M —— 程序性记忆</option>
+        <option value="mr">M+R —— 记忆与检索</option>
+        <option value="mrsx" selected>M+R+X+S —— 完整 adapter</option>
+      </select>
+      <div class="hint">生效配置由启动 harness 时挂载的 overlay 决定；切换需重启 harness。</div>
+    </div>
+    <div class="field">
+      <label for="files">附加结构 / 数据 / 势函数文件</label>
+      <input id="files" type="file" multiple>
+    </div>
+    <div class="row">
+      <button id="generate" class="primary">生成模拟</button>
+      <button id="followup" disabled>追加修改要求</button>
+    </div>
+    <div class="row"><span id="runinfo" class="hint">尚未创建任务</span></div>
+
+    <div class="sub">
+      <h2>历史任务 <span id="histcount" class="hint" style="margin:0;display:inline"></span></h2>
+      <div id="history" class="files" style="max-height:210px">
+        <div class="f"><span class="empty" style="padding:0">加载中…</span></div>
+      </div>
+      <div class="hint">点击任意一条可重新查看该任务的活动、文件与作业状态。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>B<span class="zh">Agent 活动</span></h2>
+    <div id="runhead">选择配置并生成任务后，这里会显示 agent 每一步在做什么、由哪个适配器部件驱动。<br>
+      不展示隐藏推理过程。</div>
+    <div id="parts" class="parts"></div>
+    <div id="activity"><div class="empty">等待任务开始…</div></div>
+  </section>
+
+  <section>
+    <h2>C<span class="zh">模拟作业</span></h2>
+    <div id="jobbox" class="status-line"><span class="pill">未提交</span></div>
+    <div class="row">
+      <button id="submit" disabled>校验并提交到超算</button>
+      <button id="cancel" class="danger" disabled>取消</button>
+    </div>
+    <div id="jobalert"></div>
+    <div class="sub"><h2>模拟结果</h2>
+      <div id="results" class="muted">尚未产生输出</div>
+    </div>
+
+    <div class="sub"><h2>结构可视化</h2>
+      <div id="viz" class="muted">点击文件列表中带 👁 的轨迹文件即可渲染</div>
+    </div>
+
+    <div class="sub"><h2>生成的文件 <span id="filecount" class="hint" style="margin:0;display:inline"></span></h2>
+      <div id="files-list" class="files"><div class="f"><span class="empty" style="padding:0">暂无</span></div></div>
+      <div class="hint">这些是<strong>本地</strong>文件。列表可滚动；带 👁 的轨迹文件点击即可渲染。</div>
+    </div>
+
+    <div class="sub"><h2>超算上的文件 <span id="remotecount" class="hint" style="margin:0;display:inline"></span></h2>
+      <div class="row" style="margin-bottom:6px">
+        <button id="remote-refresh" disabled>刷新远端清单</button>
+        <button id="fetch" disabled>全部取回</button>
+      </div>
+      <div id="remote-list" class="files"><div class="f"><span class="empty" style="padding:0">尚未查询远端</span></div></div>
+      <div class="hint">远端清单只是一次目录查询，不下载任何数据。<strong>查看</strong>在远端读取文本（如 log.lammps 的数值），不占本地空间；<strong>取回</strong>只拉这一个文件，带 👁 的取回后自动渲染。</div>
+    </div>
+    <div class="sub"><h2>文件内容</h2>
+      <pre id="file-view" style="max-height:190px">点击左侧文件查看内容</pre>
+    </div>
+    <div class="sub"><h2>log.lammps</h2>
+      <pre id="log-view" style="max-height:180px">—</pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let currentRun = null, stream = null, poll = null;
+const esc = (s) => String(s ?? "").replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const bytes = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n/1024).toFixed(1) + " KB" : (n/1048576).toFixed(1) + " MB";
+
+function label(ev) {
+  const d = ev.data || {};
+  if (ev.type === "tool/call") {
+    return { cls:"tool", comp:d.component || "工具", what:d.label || d.name,
+             why:d.why || "", arg:d.args || "" };
+  }
+  if (ev.type === "tool/result") {
+    const v = d.validation;
+    if (v) {
+      const verdict = v.valid ? '<span class="ok">通过</span>'
+                              : '<span class="bad">未通过 · ' + v.errors + " 个错误</span>";
+      return { cls: v.valid ? "ok" : "err", comp:"X", what:"校验结果：" + verdict,
+               why: v.codes && v.codes.length ? "问题：" + v.codes.join("、") : "",
+               html: true };
+    }
+    return { cls: d.is_error ? "err" : "ok", comp:"工具",
+             what: d.is_error ? "工具报错" : "工具返回",
+             arg: (d.preview || "").slice(0, 400) ||
+                  (d.is_error ? "（工具报错，无文本内容）" : "（无文本输出）") };
+  }
+  if (ev.type === "user/message") {
+    if (d.source === "@deepseek-ai/dsh-system-prompt")
+      return { cls:"sys", comp:"环境", what:"注入运行时上下文", arg:(d.preview || "").slice(0,180) };
+    if (d.component === "S")
+      return { cls:"gate", comp:"S", what:"S 拦截了本轮结束",
+               why: d.why || "", arg:(d.preview || "").slice(0,420) };
+    return { cls:"", comp:"你", what:"下达需求", arg:(d.preview || "").slice(0,420) };
+  }
+  if (ev.type === "step/start") return { cls:"sys", comp:"·", what:"开始第 " + (d.step ?? "?") + " 步" };
+  if (ev.type === "step/end")   return { cls:"sys", comp:"·", what:"第 " + (d.step ?? "?") + " 步结束" };
+  if (ev.type === "turn/start") return { cls:"sys", comp:"·", what:"开始第 " + (d.turn ?? "?") + " 轮" };
+  if (ev.type === "turn/end")   return { cls:"sys", comp:"·", what:"第 " + (d.turn ?? "?") + " 轮结束" };
+  if (ev.type === "agent/status")
+    return { cls:"sys", comp:"·", what: d.status === "running" ? "agent 运行中" : "agent 空闲" };
+  if (ev.type === "stream/error") return { cls:"err", comp:"!", what:"错误", arg:d.detail || "" };
+  return { cls:"sys", comp:"·", what: ev.type, arg: JSON.stringify(d).slice(0,140) };
+}
+function addEvent(ev) {
+  const box = $("activity");
+  const ph = box.querySelector(".empty"); if (ph) ph.remove();
+  const L = label(ev);
+  const el = document.createElement("div");
+  el.className = "ev " + L.cls;
+  el.dataset.comp = L.comp;
+  // Progress is turn/step, not the session seq: #3951 tells a viewer nothing
+  // about how far along the run is, while "第 3 步" does.
+  const progress = (ev.turn != null && ev.step != null)
+    ? "第 " + ev.turn + " 轮 · 第 " + ev.step + " 步" : "";
+  let html = '<div class="meta">' +
+             '<span class="comp ' + esc(L.comp) + '">' + esc(L.comp) + "</span>" +
+             '<span class="what">' + esc(L.what) + "</span>" +
+             (progress ? '<span style="margin-left:auto">' + esc(progress) + "</span>" : "") +
+             "</div>";
+  if (L.why) html += '<div class="why">' + esc(L.why) + "</div>";
+  if (L.arg && !L.html) html += '<span class="arg">' + esc(L.arg) + "</span>";
+  if (L.html) html += '<div class="vsum">' + L.why.replace(/&lt;span class="ok"&gt;/g,"") + "</div>";
+  el.innerHTML = html;
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  let body = {};
+  try { body = await res.json(); } catch (e) { body = { detail: await res.text() }; }
+  if (!res.ok) { const err = new Error(body.detail || body.error || ("HTTP " + res.status)); err.body = body; throw err; }
+  return body;
+}
+async function probe() {
+  try {
+    const h = await api("/healthz");
+    const ok = h.harness === "ok";
+    $("hdot").className = "dot " + (ok ? "ok" : "bad");
+    $("htxt").textContent = ok ? "harness 就绪 · " + h.harness_url : "harness 不可用：" + h.harness;
+  } catch (e) { $("hdot").className = "dot bad"; $("htxt").textContent = "后端未响应"; }
+}
+function watchEvents(runId) {
+  if (stream) stream.close();
+  stream = new EventSource(`/api/runs/${runId}/events`);
+  const seen = new Set();
+  stream.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    const key = (ev.seq != null ? ev.seq : "") + ev.type;
+    if (seen.has(key)) return;
+    seen.add(key); addEvent(ev);
+  };
+}
+async function refreshFiles(runId) {
+  try {
+    const r = await api(`/api/runs/${runId}/workspace`);
+    const box = $("files-list");
+    $("filecount").textContent = r.files.length ? "（" + r.files.length + " 个）" : "";
+    if (!r.files.length) { box.innerHTML = '<div class="f"><span class="empty" style="padding:0">暂无</span></div>'; return; }
+    box.innerHTML = "";
+    for (const f of r.files) {
+      const row = document.createElement("div");
+      row.className = "f";
+      const viz = /\.(dump|lammpstrj|xyz|cfg|data|lmp)$/i.test(f.name);
+      row.innerHTML = "<span>" + (viz ? '<span class="eye">👁</span>' : "") + esc(f.name) +
+                      '</span><span class="sz">' + bytes(f.size) + "</span>";
+      row.onclick = () => openFile(runId, f.name, viz, f.size);
+      box.appendChild(row);
+    }
+  } catch (e) {}
+}
+async function refreshRemote(runId) {
+  const box = $("remote-list");
+  $("remote-list").innerHTML = '<div class="f"><span class="empty" style="padding:0">查询中…</span></div>';
+  try {
+    const r = await api(`/api/runs/${runId}/remote`);
+    if (!r.ok) {
+      $("remotecount").textContent = "";
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">远端不可达：' +
+        esc(r.error || "未知原因") + "</span></div>";
+      return;
+    }
+    const total = r.files.reduce((a, f) => a + (f.bytes || 0), 0);
+    $("remotecount").textContent = r.count ? "（" + r.count + " 个 · " + bytes(total) + "）" : "";
+    if (!r.files.length) {
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">远端目录为空——作业可能还没开始</span></div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const f of r.files) {
+      const row = document.createElement("div");
+      row.className = "f";
+      // 逐个文件的动作：能取回的才给按钮，纯输入文件不给，免得误点。
+      const acts = [];
+      if (f.is_result) acts.push('<button data-act="fetch">取回</button>');
+      if (!f.is_dir && f.bytes > 0) acts.push('<button data-act="view">查看</button>');
+      row.innerHTML =
+        "<span>" + (f.visualisable ? '<span class="eye">👁</span>' : "") + esc(f.name) + "</span>" +
+        '<span class="sz">' + bytes(f.bytes) + "</span>" +
+        (acts.length ? '<span class="acts">' + acts.join("") + "</span>" : "");
+      row.querySelectorAll("button").forEach((b) => {
+        b.onclick = (ev) => { ev.stopPropagation(); remoteAction(runId, f, b.dataset.act, b); };
+      });
+      box.appendChild(row);
+    }
+  } catch (e) {
+    box.innerHTML = '<div class="f"><span class="empty" style="padding:0">查询失败：' + esc(e.message || e) + "</span></div>";
+  }
+}
+async function remoteAction(runId, f, act, btn) {
+  if (act === "view") {
+    // 在远端读文本：日志的数值不需要落到本地磁盘。
+    $("file-view").textContent = "正在从超算读取 " + f.name + " …";
+    try {
+      const r = await api(`/api/runs/${runId}/remote/file?name=${encodeURIComponent(f.name)}`);
+      $("file-view").textContent = r.ok
+        ? r.text + (r.truncated ? "\n\n[... 远端文件更大，此处已截断 ...]" : "")
+        : "读取失败：" + (r.error || "");
+    } catch (e) { $("file-view").textContent = "读取失败：" + (e.message || e); }
+    return;
+  }
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "取回中…"; }
+  try {
+    const r = await api(`/api/runs/${runId}/fetch?name=${encodeURIComponent(f.name)}`, { method:"POST" });
+    if (r.error || !(r.fetched || []).length) {
+      const why = r.error || (r.skipped && r.skipped[0] && r.skipped[0].reason) || "未取回";
+      $("jobalert").innerHTML = '<div class="alert">取回 ' + esc(f.name) + " 失败：" + esc(why) + "</div>";
+      return;
+    }
+    await refreshFiles(runId);
+    // 轨迹取回后直接渲染——用户点这一下就是为了看图。
+    if (f.visualisable) openFile(runId, f.name, true, f.bytes);
+  } catch (e) {
+    $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(e.message || e) + "</div>";
+  } finally { if (btn) { btn.disabled = false; btn.textContent = original; } }
+}
+async function refreshJob(runId) {
+  try {
+    const j = await api(`/api/runs/${runId}/job`);
+    const s = j.state || "unknown";
+    const zh = { completed:"已完成", failed:"失败", running:"运行中", pending:"排队中",
+                 cancelled:"已取消", not_submitted:"未提交", unknown:"未知" }[s] || s;
+    $("jobbox").innerHTML = '<span class="pill ' + esc(s) + '">' + esc(zh) + "</span>" +
+      (j.job_id ? "<span>作业 " + esc(j.job_id) + "</span>" : "") +
+      (j.elapsed ? "<span>已运行 " + esc(j.elapsed) + "</span>" : "") +
+      (j.exit_code ? "<span>退出码 " + esc(j.exit_code) + "</span>" : "");
+    if (j.log && j.log.text) $("log-view").textContent = j.log.text.slice(-4000);
+  } catch (e) {}
+}
+
+$("generate").onclick = async () => {
+  const text = $("request").value.trim();
+  const task = $("task").value;
+  // 没有描述又没有选任务时明确提示，而不是替用户编造一个需求。
+  if (!text && !task) {
+    $("reqwarn").style.display = "block"; $("request").focus(); return;
+  }
+  $("reqwarn").style.display = "none";
+  const btn = $("generate");
+  btn.disabled = true; btn.textContent = "生成中…";
+  $("activity").innerHTML = '<div class="empty">正在创建任务…</div>';
+  $("jobbox").innerHTML = '<span class="pill">未提交</span>';
+  $("jobalert").innerHTML = ""; $("log-view").textContent = "—";
+  try {
+    const run = await api("/api/runs", {
+      method:"POST", headers:{ "content-type":"application/json" },
+      body: JSON.stringify({ request: text, task_id: task || null, configuration: $("config").value }),
+    });
+    currentRun = run.run.run_id;
+    $("runinfo").textContent = "任务 " + currentRun + " · 配置 " + run.run.configuration;
+    const cfg = run.run.configuration;
+    const has = (c) => cfg.includes(c);
+    $("runhead").innerHTML =
+      "配置 <b>" + esc(cfg) + "</b> ｜ " +
+      (cfg === "vanilla"
+        ? "未挂载任何适配器部件，这是能力基线"
+        : [has("m") ? '<span class="on">M 常驻记忆</span>' : "", has("r") ? '<span class="on">R 检索</span>' : "",
+           has("r") ? '<span class="on">X 校验</span>' : "", cfg === "mrsx" ? '<span class="on">S 停止门控</span>' : ""]
+          .filter(Boolean).join(" + ") + " 已挂载") +
+      '<br>下方每次工具调用都标出由哪个部件驱动、做了什么。';
+    if (run.run.error) addEvent({ type:"stream/error", data:{ detail: run.run.error } });
+    const files = $("files").files;
+    if (files.length) {
+      const fd = new FormData();
+      for (const f of files) fd.append("files", f);
+      await fetch(`/api/runs/${currentRun}/files`, { method:"POST", body: fd });
+    }
+    $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false; $("fetch").disabled = false; $("remote-refresh").disabled = false;
+    watchEvents(currentRun);
+    if (poll) clearInterval(poll);
+    poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); refreshResults(currentRun); }, 3000);
+    refreshFiles(currentRun); refreshJob(currentRun); refreshResults(currentRun); loadHistory();
+  } catch (e) {
+    addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } });
+  } finally { btn.disabled = false; btn.textContent = "生成模拟"; }
+};
+$("followup").onclick = async () => {
+  const msg = $("request").value.trim();
+  if (!currentRun) return;
+  if (!msg) { $("reqwarn").style.display = "block"; return; }
+  $("reqwarn").style.display = "none";
+  try {
+    await api(`/api/runs/${currentRun}/message`, {
+      method:"POST", headers:{ "content-type":"application/json" },
+      body: JSON.stringify({ message: msg }),
+    });
+    $("request").value = "";
+  } catch (e) { addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } }); }
+};
+$("submit").onclick = async () => {
+  if (!currentRun) return;
+  const btn = $("submit"); btn.disabled = true; btn.textContent = "校验中…";
+  $("jobalert").innerHTML = "";
+  try {
+    const r = await api(`/api/runs/${currentRun}/submit`, { method:"POST" });
+    if (r.submitted === false) {
+      $("jobalert").innerHTML = '<div class="alert">提交被拒绝：' + esc(r.error || r.reason) + "</div>";
+    } else {
+      addEvent({ type:"tool/call", data:{ name:"hpc_submit_job → 作业 " + r.job_id } });
+    }
+    refreshJob(currentRun);
+  } catch (e) {
+    const v = e.body && e.body.validation;
+    if (v) {
+      // 校验未通过时不提交，并逐条列出原因——这是 X 在起作用。
+      const items = (v.errors || []).map(x =>
+        '<div style="margin-top:4px">· <span class="mono">' + esc(x.code) + "</span> " +
+        esc(x.message) + (x.line ? "（第 " + x.line + " 行）" : "") + "</div>").join("");
+      $("jobalert").innerHTML = '<div class="alert">校验未通过，已拒绝提交（' +
+        v.counts.errors + " 个错误）：" + items + "</div>";
+      addEvent({ type:"stream/error", data:{ detail:"提交被校验拦截：" + v.counts.errors + " 个错误" } });
+    } else {
+      $("jobalert").innerHTML = '<div class="alert">提交失败：' + esc(e.message || e) + "</div>";
+    }
+  } finally { btn.disabled = false; btn.textContent = "校验并提交到超算"; }
+};
+$("cancel").onclick = async () => {
+  if (!currentRun) return;
+  try { await api(`/api/runs/${currentRun}/cancel`, { method:"POST" }); refreshJob(currentRun); }
+  catch (e) { $("jobalert").innerHTML = '<div class="alert">取消失败：' + esc(e.message || e) + "</div>"; }
+};
+$("fetch").onclick = async () => {
+  if (!currentRun) return;
+  const btn = $("fetch"); btn.disabled = true; btn.textContent = "取回中…";
+  $("jobalert").innerHTML = "";
+  try {
+    const r = await api(`/api/runs/${currentRun}/fetch`, { method:"POST" });
+    if (r.error) {
+      $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(r.error) + "</div>";
+    } else if (!(r.fetched || []).length) {
+      // 没取到东西是真信息，不是失败：远端可能还没跑完。
+      $("jobalert").innerHTML = '<div class="alert">远端没有可取回的结果文件。作业可能尚未完成。</div>';
+    } else {
+      const names = r.fetched.map(f => f.name).join("、");
+      addEvent({ type:"tool/call", data:{ name:"hpc_fetch_results → " + r.fetched.length + " 个文件" } });
+      $("jobalert").innerHTML = '<div class="note">已从超算取回 ' + r.fetched.length +
+        " 个文件（" + bytes(r.total_bytes) + "）：" + esc(names) + "</div>";
+    }
+    await refreshFiles(currentRun);
+    await refreshResults(currentRun);
+  } catch (e) {
+    $("jobalert").innerHTML = '<div class="alert">取回失败：' + esc(e.message || e) + "</div>";
+  } finally { btn.disabled = false; btn.textContent = "全部取回"; }
+};
+$("remote-refresh").onclick = () => { if (currentRun) refreshRemote(currentRun); };
+/* ---- 主题：默认跟随系统，手动选择后持久化 ---- */
+const THEME_KEY = "siga-theme";
+function applyTheme(mode) {
+  document.documentElement.setAttribute("data-theme", mode);
+  $("theme").textContent = mode === "light" ? "☀️ 浅色" : "🌙 深色";
+}
+const saved = localStorage.getItem(THEME_KEY);
+const prefersLight = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches;
+applyTheme(saved || (prefersLight ? "light" : "dark"));
+$("theme").onclick = () => {
+  const next = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+  applyTheme(next);
+  localStorage.setItem(THEME_KEY, next);
+};
+
+/* ---- 历史任务：可回看 ---- */
+function ago(ts) {
+  const s = Math.max(0, (Date.now() / 1000) - ts);
+  if (s < 60) return "刚刚";
+  if (s < 3600) return Math.floor(s / 60) + " 分钟前";
+  if (s < 86400) return Math.floor(s / 3600) + " 小时前";
+  return Math.floor(s / 86400) + " 天前";
+}
+async function loadHistory() {
+  try {
+    const { runs } = await api("/api/runs");
+    const box = $("history");
+    const live = [];
+    for (const r of runs) live.push(r);
+    $("histcount").textContent = runs.length ? "（" + runs.length + "）" : "";
+    if (!runs.length) {
+      box.innerHTML = '<div class="f"><span class="empty" style="padding:0">暂无历史任务</span></div>';
+      return;
+    }
+    box.innerHTML = "";
+    for (const r of runs) {
+      const row = document.createElement("div");
+      row.className = "f";
+      row.style.flexDirection = "column";
+      row.style.alignItems = "flex-start";
+      const active = r.run_id === currentRun;
+      row.innerHTML =
+        '<div style="display:flex;justify-content:space-between;width:100%;gap:8px">' +
+          "<span style=\"font-weight:500" + (active ? ";color:var(--accent)" : "") + "\">" +
+            esc(r.run_id) + (active ? " · 当前" : "") + "</span>" +
+          '<span class="sz">' + esc(ago(r.created_at)) + "</span>" +
+        "</div>" +
+        '<div class="sz" style="margin-top:2px">' +
+          esc(r.task_id || "自由描述") + " · " + esc(r.configuration) +
+          (r.job && r.job.job_id ? " · 作业 " + esc(r.job.job_id) : "") +
+          (r.error ? " · 失败" : "") +
+        "</div>" +
+        // The request itself, otherwise free-form runs are indistinguishable
+        // from one another and the history cannot be used to find anything.
+        (r.request
+          ? '<div class="sz" style="margin-top:2px;color:var(--fg-muted);white-space:normal">' +
+            esc(r.request.length > 90 ? r.request.slice(0, 90) + "…" : r.request) + "</div>"
+          : "");
+      row.onclick = () => openRun(r.run_id);
+      box.appendChild(row);
+    }
+  } catch (e) {
+    $("history").innerHTML = '<div class="f"><span class="empty" style="padding:0">历史加载失败</span></div>';
+  }
+}
+async function openRun(runId) {
+  currentRun = runId;
+  $("activity").innerHTML = '<div class="empty">正在加载该任务的活动流…</div>';
+  $("jobalert").innerHTML = "";
+  $("runinfo").textContent = "任务 " + runId + "（历史）";
+  $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false; $("fetch").disabled = false; $("remote-refresh").disabled = false;
+  watchEvents(runId);          // 只回放该任务此后产生的事件
+  refreshFiles(runId);
+  refreshRemote(runId);
+  refreshJob(runId);
+  refreshResults(runId);
+  if (poll) clearInterval(poll);
+  poll = setInterval(() => { refreshFiles(runId); refreshJob(runId); refreshResults(runId); }, 4000);
+  // 远端清单不放进 4 秒轮询：每次都要开一条 SSH，太贵。
+  loadHistory();
+}
+
+// 部件状态用"实际用没用过"来表示，而不是固定图例。
+// 一张静态图例无法回答用户真正的问题：这个部件到底有没有在工作。
+const PARTS = [
+  ["R",   "检索",     "检索文档"],
+  ["X",   "校验",     "确定性校验"],
+  ["S",   "停止门控", "拦截返工"],
+  ["HPC", "超算",     "集群执行"],
+  ["M",   "常驻记忆", "始终注入"],
+];
+function renderParts(counts) {
+  $("parts").innerHTML = PARTS.map(([k, name, what]) => {
+    // M 不产生事件，只要挂载就一直在起作用，因此单独说明。
+    const n = k === "M" ? (currentRun ? 1 : 0) : (counts[k] || 0);
+    const on = n > 0;
+    return `<span class="part ${on ? "on" : "off"}" title="${esc(what)}">
+              <span class="comp ${k}">${k}</span>${esc(name)}
+              <span class="n">${on ? (k === "M" ? "已挂载" : n + " 次") : "未使用"}</span>
+            </span>`;
+  }).join("");
+}
+function countParts() {
+  const counts = {};
+  for (const el of document.querySelectorAll("#activity .ev")) {
+    const c = el.dataset.comp;
+    if (c) counts[c] = (counts[c] || 0) + 1;
+  }
+  renderParts(counts);
+}
+
+async function openFile(runId, name, viz, size) {
+  if (viz) {
+    $("viz").innerHTML = '<span class="muted">正在渲染 ' + esc(name) + "…（首次约需数秒）</span>";
+    try {
+      const r = await api(`/api/runs/${runId}/visualize?name=${encodeURIComponent(name)}`, { method: "POST" });
+      const o = r.observables || {};
+      let meta = "<b>" + esc(r.source) + "</b> — " + r.atoms + " 个原子 · " + r.frames + " 帧";
+      if (o.fcc_atoms != null) meta += " · FCC 原子 " + o.fcc_atoms;
+      if (o.rdf_first_peak_r != null)
+        meta += "<br>RDF 第一峰：r = " + o.rdf_first_peak_r + "，g(r) = " + o.rdf_first_peak_g;
+      if (r.warning) meta += '<br><span style="color:var(--attention)">' + esc(r.warning) + "</span>";
+      $("viz").innerHTML = '<img src="' + r.image_url + '" alt="' + esc(name) + '">' +
+                           '<div class="vizmeta">' + meta + "</div>";
+    } catch (e) {
+      $("viz").innerHTML = '<div class="alert">渲染失败：' + esc(e.message || e) + "</div>";
+    }
+  }
+  try {
+    const body = await api(`/api/runs/${runId}/file?name=${encodeURIComponent(name)}`);
+    $("file-view").textContent = body.text + (body.truncated ? "\n\n…（已截断）" : "");
+  } catch (e) { $("file-view").textContent = "读取失败：" + e.message; }
+}
+
+async function refreshResults(runId) {
+  const box = $("results");
+  try {
+    const r = await api(`/api/runs/${runId}/results`);
+    if (!r.found) { box.innerHTML = '<span class="muted">尚未产生输出</span>'; return; }
+    const lg = r.log || {};
+    let html = "";
+    // 结论先给：跑完了没有、有没有报错。
+    if (lg.error) {
+      html += '<div class="alert">LAMMPS 报错：' + esc(lg.error) + "</div>";
+    } else if (lg.finished) {
+      html += '<div class="muted">' + esc(lg.name) + " · 已跑完 · " + (lg.row_count || 0) + " 个采样点</div>";
+    } else {
+      html += '<div class="muted">' + esc(lg.name) + " · 未跑到结束（可能仍在运行）</div>";
+    }
+    // 热力学表：这才是物理输出本身。
+    if (lg.columns && lg.rows && lg.rows.length) {
+      html += '<table class="thermo"><thead><tr>' +
+        lg.columns.map(c => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+        lg.rows.map(row => "<tr>" +
+          row.map(v => "<td>" + (typeof v === "number" ? (Number.isInteger(v) ? v : v.toPrecision(6)) : esc(v)) + "</td>").join("") +
+          "</tr>").join("") + "</tbody></table>";
+      html += '<div class="muted" style="margin-top:4px">（显示最后 ' + lg.rows.length +
+              ' 行，共 ' + lg.row_count + ' 行）</div>';
+    }
+    // 数据文件：给出大小和末行，省得逐个点开。
+    const data = (r.files || []).filter(f => f.preview);
+    if (data.length) {
+      html += '<div class="rlist">' + data.map(f =>
+        "<div>· <b>" + esc(f.name) + "</b> — " + f.preview.map(esc).join(" / ") + "</div>").join("") + "</div>";
+    }
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<span class="muted">结果读取失败</span>'; }
+}
+
+probe(); loadHistory();
+setInterval(probe, 15000);
+setInterval(loadHistory, 20000);
+</script>
+</body>
+</html>

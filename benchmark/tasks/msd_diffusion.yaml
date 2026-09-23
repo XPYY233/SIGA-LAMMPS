@@ -1,0 +1,96 @@
+id: msd_diffusion
+title: Mean-square-displacement diffusion
+summary: Measure self-diffusion from the mean-square displacement of a fluid.
+
+specification: |
+  Measure the self-diffusion coefficient of a three-dimensional Lennard-Jones
+  fluid by computing the mean square displacement of the atoms. Use reduced
+  Lennard-Jones units and a face-centred cubic starting lattice at a reduced
+  density of 0.7. Equilibrate at a reduced temperature of 1.5, comfortably above
+  the melting point so the system is genuinely fluid, then measure the mean
+  square displacement over a long production run.
+  Remove the centre-of-mass motion so that whole-system drift is not counted as
+  diffusion. Use a timestep of 0.005 and a Nose-Hoover thermostat, and output
+  the total mean square displacement every 100 steps.
+
+reference: msd_diffusion/in.msd
+
+required_files:
+  - in.*
+
+level1:
+  required_commands: [units, atom_style, lattice, region, create_box, create_atoms, pair_style, pair_coeff, velocity, fix, timestep, thermo, run]
+  required_patterns:
+    - id: units_lj
+      description: "reduced Lennard-Jones units are requested"
+      pattern: '^\s*units\s+lj\b'
+    - id: atom_style_atomic
+      description: "point particles only; nothing here has bonds or charge"
+      pattern: '^\s*atom_style\s+atomic\b'
+    - id: pair_style_lj
+      description: "a truncated Lennard-Jones interaction"
+      pattern: '^\s*pair_style\s+lj/cut\b'
+
+level3:
+  - id: msd_computed
+    kind: regex
+    pattern: '^\s*compute\s+\S+\s+\S+\s+msd\b'
+    description: the requested observable must actually be computed
+  - id: msd_removes_centre_of_mass_drift
+    kind: regex
+    pattern: '^\s*compute\s+\S+\s+\S+\s+msd\s+.*\bcom\s+yes\b'
+    description: >
+      Without `com yes`, whole-system translation is reported as diffusion and
+      the coefficient is meaningless.
+  - id: msd_is_output
+    kind: regex_any
+    patterns:
+      - 'c_\S+\[4\]'
+      - 'fix\s+\S+\s+\S+\s+ave/time'
+    description: >
+      Computing an observable is not the same as outputting it. MSD must reach
+      the log, either through thermo_style or a time-averaging fix.
+  - id: diffusive_temperature
+    kind: pattern_number
+    command: velocity
+    argument: 2
+    expected: 1.5
+    tolerance: 0.1
+    description: a temperature above the melting point, or nothing diffuses
+  - id: ensemble_is_thermostatted
+    description: "the production run needs a defined integrator"
+    kind: regex
+    pattern: '^\s*fix\s+\S+\s+\S+\s+(nvt|nve)\b'
+  - id: run_length_sufficient
+    kind: run_steps_min
+    minimum: 5000
+    description: MSD needs a production window long enough to show a linear regime
+
+level4:
+  - id: msd_is_growing
+    kind: log_series_increasing
+    column: c_msd
+    min_growth_factor: 2.0
+    description: >
+      A liquid's mean square displacement grows with time. A series that
+      plateaus indicates a solid, so the measurement is of the wrong phase.
+  - id: temperature_stable
+    description: "the fluid should stay near the requested temperature during production"
+    kind: log_range
+    column: Temp
+    after_fraction: 0.3
+    min: 1.2
+    max: 1.8
+  - id: diffusion_coefficient
+    kind: human_review_required
+    description: >
+      Fitting the linear regime to extract D requires choosing a fit window.
+      That choice is not deterministically checkable here, so it is flagged.
+  - id: no_atom_loss
+    description: "a stable fluid must not lose atoms"
+    kind: log_forbidden
+    pattern: 'Lost atoms|Out of range atoms'
+
+notes: >
+  Two independent failures are common: measuring MSD in a solid, where it
+  plateaus, and omitting `com yes`, which counts drift as diffusion.
