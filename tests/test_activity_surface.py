@@ -317,3 +317,56 @@ def test_a_human_message_gets_no_component() -> None:
         "user/message", {"source": {"kind": "user"}, "content": [{"type": "text", "text": "hi"}]}
     )
     assert payload["component"] is None
+
+
+# --------------------------------------------------------------------------- #
+# results
+# --------------------------------------------------------------------------- #
+
+
+def test_results_read_the_local_log_not_only_the_cluster_one() -> None:
+    """The agent runs LAMMPS locally while working, and that is where numbers appear.
+
+    The job panel reads the cluster's log, which stays empty until something is
+    submitted. A researcher asking "how do I see the output" should not have to
+    discover that the answer was in a file called log.local all along.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parent.parent / "web" / "backend" / "app.py").read_text()
+    assert '"/api/runs/{run_id}/results"' in source
+    # Any log name, chosen by size, not a hardcoded "log.lammps".
+    assert 'startswith("log")' in source
+    assert 'suffix == ".log"' in source
+
+
+def test_thermo_columns_survive_the_round_trip() -> None:
+    """The thermo table is the physics output, so its parsing is load-bearing."""
+    from benchmark.evaluator import parse_thermo
+
+    text = (
+        "LAMMPS (22 Jul 2025)\n"
+        "   Step          Temp         Pxy\n"
+        "      0   1.0000000   0.0000000\n"
+        "   5000   1.0022916   0.1533985\n"
+        "  10000   1.0022916   0.1533985\n"
+        "Loop time of 1.0\nTotal wall time: 0:00:01\n"
+    )
+    columns, rows = parse_thermo(text)
+    assert columns == ["Step", "Temp", "Pxy"]
+    assert len(rows) == 3
+    assert rows[-1][0] == 10000.0
+
+
+def test_a_finished_log_is_distinguishable_from_a_truncated_one() -> None:
+    """Whether LAMMPS reached the end is the first thing a reader needs."""
+    from benchmark.evaluator import parse_thermo
+
+    finished = "   Step Temp\n 0 1.0\nLoop time\nTotal wall time: 0:00:01\n"
+    truncated = "   Step Temp\n 0 1.0\n"
+    _, a = parse_thermo(finished)
+    _, b = parse_thermo(truncated)
+    assert a and b
+    assert "Total wall time" in finished
+    assert "Total wall time" not in truncated

@@ -343,6 +343,74 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
             "truncated": candidate.stat().st_size > max_bytes,
         }
 
+    @app.get("/api/runs/{run_id}/results")
+    async def run_results(run_id: str) -> dict[str, Any]:
+        """What the run actually produced.
+
+        The job panel reads the cluster's log, which is empty until something is
+        submitted. But the agent also runs LAMMPS locally while working, and that
+        is usually where the numbers appear first. Results therefore come from
+        the workspace: whichever LAMMPS log is present, its thermo table, and a
+        summary of the data files written beside it.
+
+        A researcher asking "how do I see the output" should not have to open
+        eight files one at a time to find out whether anything worked.
+        """
+        from benchmark.evaluator import parse_thermo
+
+        run = _require(runs, run_id, resolved)
+        workspace = run.workspace
+        if not workspace.is_dir():
+            return {"run_id": run_id, "found": False, "detail": "工作区不存在"}
+
+        # Any LAMMPS log, whichever name the agent chose: log.local, log.lammps,
+        # or something else. Prefer the largest, which is the full run rather
+        # than a truncated probe.
+        candidates = [
+            p for p in workspace.iterdir()
+            if p.is_file() and (p.name.startswith("log") or p.suffix == ".log")
+        ]
+        log_path = max(candidates, key=lambda p: p.stat().st_size) if candidates else None
+
+        payload: dict[str, Any] = {"run_id": run_id, "found": log_path is not None}
+        if log_path is not None:
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+            columns, rows = parse_thermo(text)
+            finished = "Total wall time" in text
+            errors = [l.strip() for l in text.splitlines() if l.startswith("ERROR")]
+            payload["log"] = {
+                "name": log_path.name,
+                "bytes": log_path.stat().st_size,
+                "finished": finished,
+                "error": errors[0] if errors else None,
+                "columns": columns,
+                # The tail of the run is what a researcher reads; the head is ramp-up.
+                "rows": rows[-8:],
+                "row_count": len(rows),
+            }
+
+        # Output files, with the two facts that decide whether to open one: how
+        # big it is, and whether it holds numbers rather than prose.
+        files = []
+        for path in sorted(workspace.rglob("*")):
+            if not path.is_file() or path.name == METADATA_NAME:
+                continue
+            if log_path is not None and path == log_path:
+                continue
+            entry: dict[str, Any] = {
+                "name": path.relative_to(workspace).as_posix(),
+                "bytes": path.stat().st_size,
+            }
+            if path.suffix in {".dat", ".txt", ".csv"}:
+                try:
+                    head = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    entry["preview"] = head[-3:] if len(head) > 3 else head
+                except OSError:
+                    pass
+            files.append(entry)
+        payload["files"] = files
+        return payload
+
     @app.get("/api/runs/{run_id}/job")
     async def job_status(run_id: str) -> dict[str, Any]:
         """Remote job state and the LAMMPS log, read from the cluster."""

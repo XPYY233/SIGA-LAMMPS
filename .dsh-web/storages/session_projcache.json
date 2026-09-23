@@ -852,67 +852,61 @@
         "rows": {
           "title": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": "Lennard-Jones crystal melting simulation"
           },
           "goal": {
             "ver": 4,
-            "seq": 8999,
+            "seq": 32391,
             "val": null
           },
           "sessionStats": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "turns": 1,
-              "steps": 8,
-              "llmMs": 41711,
-              "toolMs": 5368,
-              "ttftMs": 5347,
-              "ttftSteps": 8,
-              "decodeMs": 36364,
-              "decodeTokens": 7566,
+              "steps": 26,
+              "llmMs": 177710,
+              "toolMs": 135334,
+              "ttftMs": 20229,
+              "ttftSteps": 26,
+              "decodeMs": 157481,
+              "decodeTokens": 33160,
               "lastTurn": 1,
-              "openStep": {
-                "turn": 1,
-                "step": 9,
-                "startTime": 1790125782963,
-                "firstTokenTime": 1790125783496
-              },
+              "openStep": null,
               "pendingCalls": {}
             }
           },
           "subagentTiming": {
             "ver": 2,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "descriptorSeen": false,
-              "settledMs": 0,
-              "pendingTurnStart": 1790125735716
+              "settledMs": 0
             }
           },
           "subagent": {
             "ver": 2,
-            "seq": 8999,
+            "seq": 32391,
             "val": {}
           },
           "tokenUsage": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "totals": {
-                "uncachedInputTokens": 22414,
-                "outputTokens": 7566,
-                "cacheReadTokens": 156288,
+                "uncachedInputTokens": 33747,
+                "outputTokens": 33160,
+                "cacheReadTokens": 1091712,
                 "cacheWriteTokens": 0
               },
               "last": {
                 "turn": 1,
-                "step": 8,
+                "step": 26,
                 "buckets": {
-                  "uncachedInputTokens": 426,
-                  "outputTokens": 440,
-                  "cacheReadTokens": 28672,
+                  "uncachedInputTokens": 329,
+                  "outputTokens": 1364,
+                  "cacheReadTokens": 63232,
                   "cacheWriteTokens": 0
                 }
               }
@@ -920,26 +914,26 @@
           },
           "contextPressure": {
             "ver": 4,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
-              "surfaceTokens": 15557,
+              "surfaceTokens": 44063,
               "contextWindow": 1000000,
-              "pressureTokens": 29098,
-              "sampledSurfaceTokens": 15007
+              "pressureTokens": 63561,
+              "sampledSurfaceTokens": 43020
             }
           },
           "contextBreakdown": {
             "ver": 2,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "systemTokens": 3096,
               "toolsTokens": 7399,
-              "messageTokens": 15557
+              "messageTokens": 44063
             }
           },
           "permissions": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "preset": "danger-full-access",
               "sandbox": "danger-full-access",
@@ -948,7 +942,7 @@
           },
           "sessionListMetadata": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": {
               "blank": false,
               "lastPromptAt": 1790125735769
@@ -956,17 +950,141 @@
           },
           "imageLimits": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
             "val": null
           },
           "todos": {
             "ver": 2,
-            "seq": 8999,
+            "seq": 32391,
             "val": null
           },
           "plan": {
             "ver": 1,
-            "seq": 8999,
+            "seq": 32391,
+            "val": {
+              "active": false,
+              "wanted": null
+            }
+          }
+        }
+      },
+      "session-d0f2f551-1856-42fe-abcb-f51433fc1fc8": {
+        "identity": {
+          "createdAt": 1790126485616,
+          "cwd": "/Users/fanjunran/SIGA-LAMMPS/workspace/run-980ba3f2e7"
+        },
+        "rows": {
+          "title": {
+            "ver": 1,
+            "seq": 83818,
+            "val": "二维LJ液体剪切黏度模拟脚本"
+          },
+          "goal": {
+            "ver": 4,
+            "seq": 83818,
+            "val": null
+          },
+          "sessionStats": {
+            "ver": 1,
+            "seq": 83818,
+            "val": {
+              "turns": 1,
+              "steps": 62,
+              "llmMs": 425433,
+              "toolMs": 54271,
+              "ttftMs": 55882,
+              "ttftSteps": 62,
+              "decodeMs": 369551,
+              "decodeTokens": 86021,
+              "lastTurn": 1,
+              "openStep": null,
+              "pendingCalls": {}
+            }
+          },
+          "subagentTiming": {
+            "ver": 2,
+            "seq": 83818,
+            "val": {
+              "descriptorSeen": false,
+              "settledMs": 0
+            }
+          },
+          "subagent": {
+            "ver": 2,
+            "seq": 83818,
+            "val": {}
+          },
+          "tokenUsage": {
+            "ver": 1,
+            "seq": 83818,
+            "val": {
+              "totals": {
+                "uncachedInputTokens": 83570,
+                "outputTokens": 86021,
+                "cacheReadTokens": 6147968,
+                "cacheWriteTokens": 0
+              },
+              "last": {
+                "turn": 1,
+                "step": 62,
+                "buckets": {
+                  "uncachedInputTokens": 281,
+                  "outputTokens": 2397,
+                  "cacheReadTokens": 153088,
+                  "cacheWriteTokens": 0
+                }
+              }
+            }
+          },
+          "contextPressure": {
+            "ver": 4,
+            "seq": 83818,
+            "val": {
+              "surfaceTokens": 118597,
+              "contextWindow": 1000000,
+              "pressureTokens": 153369,
+              "sampledSurfaceTokens": 117145
+            }
+          },
+          "contextBreakdown": {
+            "ver": 2,
+            "seq": 83818,
+            "val": {
+              "systemTokens": 3096,
+              "toolsTokens": 7399,
+              "messageTokens": 118597
+            }
+          },
+          "permissions": {
+            "ver": 1,
+            "seq": 83818,
+            "val": {
+              "preset": "danger-full-access",
+              "sandbox": "danger-full-access",
+              "approval": "never"
+            }
+          },
+          "sessionListMetadata": {
+            "ver": 1,
+            "seq": 83818,
+            "val": {
+              "blank": false,
+              "lastPromptAt": 1790126485674
+            }
+          },
+          "imageLimits": {
+            "ver": 1,
+            "seq": 83818,
+            "val": null
+          },
+          "todos": {
+            "ver": 2,
+            "seq": 83818,
+            "val": null
+          },
+          "plan": {
+            "ver": 1,
+            "seq": 83818,
             "val": {
               "active": false,
               "wanted": null

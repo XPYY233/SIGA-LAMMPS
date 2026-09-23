@@ -140,6 +140,16 @@
   .files .f:hover{background:var(--surface2); color:var(--accent)}
   .files .f .sz{color:var(--fg-subtle); font-size:11px}
   .sub{margin-top:16px}
+  table.thermo{width:100%; border-collapse:collapse; font-size:11.5px; margin-top:6px;
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  table.thermo th,table.thermo td{padding:3px 7px; text-align:right; white-space:nowrap;
+                border-bottom:1px solid var(--border-muted)}
+  table.thermo th{color:var(--fg-muted); font-weight:600; text-align:right;
+                border-bottom:1px solid var(--border)}
+  table.thermo td:first-child,table.thermo th:first-child{text-align:left}
+  table.thermo tr:last-child td{color:var(--fg); font-weight:600}
+  .rlist{margin-top:6px; font-size:12px}
+  .rlist div{padding:1px 0; color:var(--fg-muted)}
   .alert{border:1px solid var(--border); border-left:3px solid var(--danger);
          border-radius:6px; padding:8px 10px; font-size:12.5px;
          background:var(--tint-danger); margin-top:10px; line-height:1.6}
@@ -222,6 +232,10 @@
       <button id="cancel" class="danger" disabled>取消</button>
     </div>
     <div id="jobalert"></div>
+    <div class="sub"><h2>模拟结果</h2>
+      <div id="results" class="muted">尚未产生输出</div>
+    </div>
+
     <div class="sub"><h2>生成的文件</h2>
       <div id="files-list" class="files"><div class="f"><span class="empty" style="padding:0">暂无</span></div></div>
     </div>
@@ -399,8 +413,8 @@ $("generate").onclick = async () => {
     $("followup").disabled = false; $("submit").disabled = false; $("cancel").disabled = false;
     watchEvents(currentRun);
     if (poll) clearInterval(poll);
-    poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); }, 3000);
-    refreshFiles(currentRun); refreshJob(currentRun); loadHistory();
+    poll = setInterval(() => { refreshFiles(currentRun); refreshJob(currentRun); refreshResults(currentRun); }, 3000);
+    refreshFiles(currentRun); refreshJob(currentRun); refreshResults(currentRun); loadHistory();
   } catch (e) {
     addEvent({ type:"stream/error", data:{ detail:String(e.message || e) } });
   } finally { btn.disabled = false; btn.textContent = "生成模拟"; }
@@ -524,9 +538,45 @@ async function openRun(runId) {
   watchEvents(runId);          // 只回放该任务此后产生的事件
   refreshFiles(runId);
   refreshJob(runId);
+  refreshResults(runId);
   if (poll) clearInterval(poll);
-  poll = setInterval(() => { refreshFiles(runId); refreshJob(runId); }, 4000);
+  poll = setInterval(() => { refreshFiles(runId); refreshJob(runId); refreshResults(runId); }, 4000);
   loadHistory();
+}
+
+async function refreshResults(runId) {
+  const box = $("results");
+  try {
+    const r = await api(`/api/runs/${runId}/results`);
+    if (!r.found) { box.innerHTML = '<span class="muted">尚未产生输出</span>'; return; }
+    const lg = r.log || {};
+    let html = "";
+    // 结论先给：跑完了没有、有没有报错。
+    if (lg.error) {
+      html += '<div class="alert">LAMMPS 报错：' + esc(lg.error) + "</div>";
+    } else if (lg.finished) {
+      html += '<div class="muted">' + esc(lg.name) + " · 已跑完 · " + (lg.row_count || 0) + " 个采样点</div>";
+    } else {
+      html += '<div class="muted">' + esc(lg.name) + " · 未跑到结束（可能仍在运行）</div>";
+    }
+    // 热力学表：这才是物理输出本身。
+    if (lg.columns && lg.rows && lg.rows.length) {
+      html += '<table class="thermo"><thead><tr>' +
+        lg.columns.map(c => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+        lg.rows.map(row => "<tr>" +
+          row.map(v => "<td>" + (typeof v === "number" ? (Number.isInteger(v) ? v : v.toPrecision(6)) : esc(v)) + "</td>").join("") +
+          "</tr>").join("") + "</tbody></table>";
+      html += '<div class="muted" style="margin-top:4px">（显示最后 ' + lg.rows.length +
+              ' 行，共 ' + lg.row_count + ' 行）</div>';
+    }
+    // 数据文件：给出大小和末行，省得逐个点开。
+    const data = (r.files || []).filter(f => f.preview);
+    if (data.length) {
+      html += '<div class="rlist">' + data.map(f =>
+        "<div>· <b>" + esc(f.name) + "</b> — " + f.preview.map(esc).join(" / ") + "</div>").join("") + "</div>";
+    }
+    box.innerHTML = html;
+  } catch (e) { box.innerHTML = '<span class="muted">结果读取失败</span>'; }
 }
 
 probe(); loadHistory();
