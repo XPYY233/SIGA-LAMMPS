@@ -171,10 +171,16 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, shutdown)
 
     print(f"启动 harness（端口 {args.harness_port}，DSH_HOME={DSH_HOME}）…")
+    # The child's output goes to a file, not to a PIPE nobody drains. An
+    # unread PIPE can block the child once it fills, and it hid every startup
+    # error: a harness that died on a bad overlay looked identical to one that
+    # never started.
+    harness_log_path = REPO_ROOT / ".dsh-web" / "harness.log"
+    harness_log = open(harness_log_path, "w")
     harness = subprocess.Popen(
         ["node", "--import", "tsx/esm", "apps/cli/src/bin.ts", "web", "--patch", str(PATCH)],
         cwd=HARNESS_ROOT, env=harness_env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        stdout=harness_log, stderr=subprocess.STDOUT,
     )
     processes.append(("harness", harness))
 
@@ -222,6 +228,12 @@ def main(argv: list[str] | None = None) -> int:
             for name, process in processes:
                 if process.poll() is not None:
                     print(f"\n{name} 已退出（退出码 {process.returncode}）。", file=sys.stderr)
+                    if name == "harness":
+                        # Point at the log rather than leaving the reader to guess.
+                        tail = harness_log_path.read_text(errors="replace").strip().splitlines()
+                        for line in tail[-8:]:
+                            print(f"  {line}", file=sys.stderr)
+                        print(f"  （完整输出：{harness_log_path}）", file=sys.stderr)
     except KeyboardInterrupt:
         pass
     finally:

@@ -29,7 +29,13 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    StreamingResponse,
+)
+from urllib.parse import quote
 from pydantic import BaseModel
 
 from config.loader import ConfigError, Settings, load_settings
@@ -411,6 +417,59 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
         payload["files"] = files
         return payload
 
+    @app.post("/api/runs/{run_id}/visualize")
+    async def visualize(run_id: str, name: str, frame: int | None = None) -> dict[str, Any]:
+        """Render a structure file, returning the image URL and the observables.
+
+        OVITO runs in a worker thread: it is CPU-bound and holds a rendering
+        context, and doing it inline would stall every other request including
+        the activity stream that is meant to stay live.
+        """
+        from adapter.visualize import (
+            VisualisationError,
+            is_visualisable,
+            render_structure,
+        )
+
+        run = _require(runs, run_id, resolved)
+        candidate = (run.workspace / name).resolve()
+        root = run.workspace.resolve()
+        if candidate != root and root not in candidate.parents:
+            raise HTTPException(status_code=400, detail="路径越出任务工作区")
+        if not candidate.is_file():
+            raise HTTPException(status_code=404, detail=f"找不到文件：{name}")
+        if not is_visualisable(candidate):
+            raise HTTPException(
+                status_code=415,
+                detail=f"{candidate.name} 不是可可视化的结构文件。"
+                       "把 dump 写进脚本（dump ... custom ... traj.dump）后重新运行即可。",
+            )
+
+        output = run.workspace / ".siga-visual" / f"{candidate.name}.png"
+        try:
+            result = await asyncio.to_thread(
+                render_structure, candidate, output, frame=frame
+            )
+        except VisualisationError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        payload = result.to_dict()
+        # Cache-busted, so re-rendering a file at a different frame is not served
+        # from the browser's cache.
+        payload["image_url"] = (
+            f"/api/runs/{run_id}/image?name={quote(candidate.name)}&v={int(time.time())}"
+        )
+        return payload
+
+    @app.get("/api/runs/{run_id}/image")
+    async def get_image(run_id: str, name: str) -> FileResponse:
+        """Serve a rendered PNG from the run's cache directory."""
+        run = _require(runs, run_id, resolved)
+        path = run.workspace / ".siga-visual" / f"{Path(name).name}.png"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="尚未渲染该文件")
+        return FileResponse(path, media_type="image/png")
+
     @app.get("/api/runs/{run_id}/job")
     async def job_status(run_id: str) -> dict[str, Any]:
         """Remote job state and the LAMMPS log, read from the cluster."""
@@ -620,21 +679,17 @@ async def _pump_events(run: Run, harness: HarnessClient) -> None:
 #: which one acted. "Called a tool" is not informative; "X validated the script
 #: and found two ordering errors" is.
 _TOOL_ROLES: dict[str, tuple[str, str, str]] = {
-    "mcp__lammps__search_lammps": (
-        "R", "检索 LAMMPS 文档",
-        "在官方文档、示例脚本与命令参考中做语义检索，返回最相关的片段与出处。",
-    ),
-    "mcp__lammps__validate_lammps_input": (
-        "X", "确定性校验",
-        "逐条检查命令顺序、units、atom_style、结构初始化、力场、文件引用、ensemble、"
-        "timestep、run 与明显冲突，只报结构性结论，不判断物理对错。",
-    ),
     "hpc_preflight": ("HPC", "超算连通性预检", "检查 SSH、远端工作区、SLURM 分区与资源上限。"),
     "hpc_upload_workspace": ("HPC", "上传工作区", "把本地工作区传到远端 workspace 根目录下。"),
     "hpc_submit_job": ("HPC", "提交作业", "渲染作业脚本并 sbatch，资源被夹紧到配置上限。"),
     "hpc_job_status": ("HPC", "查询作业状态", "从 squeue 与 sacct 读取作业状态。"),
     "hpc_read_log": ("HPC", "读取作业日志", "读取 log.lammps、SLURM stdout/stderr 或文件列表。"),
     "hpc_cancel_job": ("HPC", "取消作业", "scancel 指定作业。"),
+    "search_lammps": ("R", "检索 LAMMPS 文档",
+                      "在官方文档、示例脚本与命令参考中做语义检索，返回最相关的片段与出处。"),
+    "validate_lammps_input": ("X", "确定性校验",
+                              "逐条检查命令顺序、units、atom_style、结构初始化、力场、文件引用、"
+                              "ensemble、timestep、run 与明显冲突，只报结构性结论，不判断物理对错。"),
     "bash": ("执行", "运行命令", "在会话工作区内执行 shell 命令。"),
     "write": ("文件", "写入文件", "创建一个新文件。"),
     "edit": ("文件", "修改文件", "对已有文件做定点替换。"),
@@ -646,14 +701,19 @@ _TOOL_ROLES: dict[str, tuple[str, str, str]] = {
 
 
 def _role_of(name: str) -> tuple[str, str, str]:
-    """The component, label and explanation for a tool name."""
-    if name in _TOOL_ROLES:
-        return _TOOL_ROLES[name]
-    if name.startswith("mcp__lammps__"):
-        return ("Adapter", name.replace("mcp__lammps__", ""), "调用适配器工具。")
+    """The component, label and explanation for a tool name.
+
+    MCP tools arrive server-qualified as ``mcp__<server>__<tool>``, so the
+    prefix is stripped before the lookup. Matching the qualified name directly
+    is what made every HPC call render as an unlabelled "Adapter": the calls
+    were happening and the table simply never matched them.
+    """
+    short = name.split("__", 2)[-1] if name.startswith("mcp__") else name
+    if short in _TOOL_ROLES:
+        return _TOOL_ROLES[short]
     if name.startswith("mcp__"):
-        return ("MCP", name, "调用外部 MCP 工具。")
-    return ("工具", name, "调用通用工具。")
+        return ("MCP", short, "调用外部 MCP 工具。")
+    return ("工具", short, "调用通用工具。")
 
 
 #: The plugin that owns the stop gate, and the one that injects runtime context.

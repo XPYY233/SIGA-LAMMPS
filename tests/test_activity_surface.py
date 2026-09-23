@@ -370,3 +370,36 @@ def test_a_finished_log_is_distinguishable_from_a_truncated_one() -> None:
     assert a and b
     assert "Total wall time" in finished
     assert "Total wall time" not in truncated
+
+
+def test_hpc_tools_are_recognised_under_their_qualified_names() -> None:
+    """MCP tools arrive as mcp__<server>__<tool>, and the table keyed on bare names.
+
+    Every HPC call therefore missed the lookup and rendered as an unlabelled
+    "Adapter" — the calls were happening, and the display simply never matched
+    them. A user watching a run that submitted to the cluster saw no evidence of
+    it.
+    """
+    for tool in (
+        "hpc_preflight",
+        "hpc_upload_workspace",
+        "hpc_submit_job",
+        "hpc_job_status",
+        "hpc_read_log",
+        "hpc_cancel_job",
+    ):
+        component, label, why = _role_of(f"mcp__lammps__{tool}")
+        assert component == "HPC", f"{tool} resolved to {component!r}"
+        assert label and why
+
+
+def test_every_qualified_adapter_tool_resolves_to_its_component() -> None:
+    assert _role_of("mcp__lammps__search_lammps")[0] == "R"
+    assert _role_of("mcp__lammps__validate_lammps_input")[0] == "X"
+
+
+def test_a_qualified_tool_with_no_entry_still_gets_a_visible_label() -> None:
+    """The fallback must produce something the stylesheet can render."""
+    component, label, why = _role_of("mcp__other__some_tool")
+    assert component == "MCP"
+    assert label == "some_tool"

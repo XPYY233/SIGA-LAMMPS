@@ -1091,6 +1091,130 @@
             }
           }
         }
+      },
+      "session-49c9639c-8600-489d-894b-c5c901192ce8": {
+        "identity": {
+          "createdAt": 1790129056277,
+          "cwd": "/Users/fanjunran/SIGA-LAMMPS/workspace/run-075a8d80e4"
+        },
+        "rows": {
+          "title": {
+            "ver": 1,
+            "seq": 27549,
+            "val": "LAMMPS 模拟 LJ 晶体熔化"
+          },
+          "goal": {
+            "ver": 4,
+            "seq": 27549,
+            "val": null
+          },
+          "sessionStats": {
+            "ver": 1,
+            "seq": 27549,
+            "val": {
+              "turns": 1,
+              "steps": 50,
+              "llmMs": 172107,
+              "toolMs": 138630,
+              "ttftMs": 44011,
+              "ttftSteps": 50,
+              "decodeMs": 128096,
+              "decodeTokens": 29024,
+              "lastTurn": 1,
+              "openStep": null,
+              "pendingCalls": {}
+            }
+          },
+          "subagentTiming": {
+            "ver": 2,
+            "seq": 27549,
+            "val": {
+              "descriptorSeen": false,
+              "settledMs": 0
+            }
+          },
+          "subagent": {
+            "ver": 2,
+            "seq": 27549,
+            "val": {}
+          },
+          "tokenUsage": {
+            "ver": 1,
+            "seq": 27549,
+            "val": {
+              "totals": {
+                "uncachedInputTokens": 65014,
+                "outputTokens": 29024,
+                "cacheReadTokens": 2678400,
+                "cacheWriteTokens": 0
+              },
+              "last": {
+                "turn": 1,
+                "step": 50,
+                "buckets": {
+                  "uncachedInputTokens": 647,
+                  "outputTokens": 1950,
+                  "cacheReadTokens": 87040,
+                  "cacheWriteTokens": 0
+                }
+              }
+            }
+          },
+          "contextPressure": {
+            "ver": 4,
+            "seq": 27549,
+            "val": {
+              "surfaceTokens": 59657,
+              "contextWindow": 1000000,
+              "pressureTokens": 87687,
+              "sampledSurfaceTokens": 58490
+            }
+          },
+          "contextBreakdown": {
+            "ver": 2,
+            "seq": 27549,
+            "val": {
+              "systemTokens": 3337,
+              "toolsTokens": 7399,
+              "messageTokens": 59657
+            }
+          },
+          "permissions": {
+            "ver": 1,
+            "seq": 27549,
+            "val": {
+              "preset": "danger-full-access",
+              "sandbox": "danger-full-access",
+              "approval": "never"
+            }
+          },
+          "sessionListMetadata": {
+            "ver": 1,
+            "seq": 27549,
+            "val": {
+              "blank": false,
+              "lastPromptAt": 1790129056629
+            }
+          },
+          "imageLimits": {
+            "ver": 1,
+            "seq": 27549,
+            "val": null
+          },
+          "todos": {
+            "ver": 2,
+            "seq": 27549,
+            "val": null
+          },
+          "plan": {
+            "ver": 1,
+            "seq": 27549,
+            "val": {
+              "active": false,
+              "wanted": null
+            }
+          }
+        }
       }
     }
   }
