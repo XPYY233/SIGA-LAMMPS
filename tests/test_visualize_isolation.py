@@ -236,3 +236,41 @@ def test_the_cli_reports_a_bad_file_as_a_clean_failure(tmp_path: Path) -> None:
     payload = json.loads(result_path.read_text())
     assert payload["ok"] is False
     assert payload["error"]
+
+
+# --------------------------------------------------------------------------- #
+# the file panel must count what the run produced
+# --------------------------------------------------------------------------- #
+
+
+def test_the_file_list_excludes_the_render_cache_and_the_metadata(tmp_path: Path) -> None:
+    """A run that wrote five outputs reported nine files.
+
+    The metadata this console writes and the PNGs cached from rendering both live
+    in the workspace, and both are real files — but neither is something the
+    simulation produced. The count is the point of the panel, so counting them
+    overstates what the run did.
+    """
+    from web.backend.app import _workspace_files
+
+    (tmp_path / "in.melt").write_text("units lj\n")
+    (tmp_path / "log.lammps").write_text("Step Temp\n")
+    (tmp_path / "solid.dump").write_text("ITEM: TIMESTEP\n")
+    (tmp_path / "run.json").write_text("{}")
+    cache = tmp_path / ".siga-visual"
+    cache.mkdir()
+    (cache / "solid.dump.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    names = [f["name"] for f in _workspace_files(tmp_path)]
+
+    assert names == ["in.melt", "log.lammps", "solid.dump"]
+    assert "run.json" not in names
+    assert not any(".siga-visual" in n for n in names)
+
+
+def test_the_file_list_reports_sizes(tmp_path: Path) -> None:
+    from web.backend.app import _workspace_files
+
+    (tmp_path / "traj.dump").write_bytes(b"x" * 1234)
+    files = _workspace_files(tmp_path)
+    assert files == [{"name": "traj.dump", "size": 1234}]

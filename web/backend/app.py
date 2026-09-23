@@ -319,20 +319,23 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
 
     @app.get("/api/runs/{run_id}/workspace")
     async def workspace_files(run_id: str) -> dict[str, Any]:
-        """The generated files, so a researcher can see what was produced."""
+        """The files this run produced, so a researcher can see what came out.
+
+        The render cache and the run's own metadata are deliberately excluded.
+        Both live in the workspace and both are real files, but neither is
+        something the simulation produced: counting them made a run that wrote
+        five outputs report nine, and the number is the whole point of the panel.
+        The cache is regenerable and the metadata is already shown in the history
+        list, so nothing is hidden by leaving them out.
+        """
         run = _require(runs, run_id, resolved)
         if not run.workspace.is_dir():
             return {"run_id": run_id, "files": []}
-        files = []
-        for path in sorted(run.workspace.rglob("*")):
-            if path.is_file():
-                files.append(
-                    {
-                        "name": path.relative_to(run.workspace).as_posix(),
-                        "size": path.stat().st_size,
-                    }
-                )
-        return {"run_id": run_id, "workspace": str(run.workspace), "files": files}
+        return {
+            "run_id": run_id,
+            "workspace": str(run.workspace),
+            "files": _workspace_files(run.workspace),
+        }
 
     @app.get("/api/runs/{run_id}/file")
     async def read_workspace_file(run_id: str, name: str, max_bytes: int = 200_000) -> dict[str, Any]:
@@ -450,7 +453,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
                        "把 dump 写进脚本（dump ... custom ... traj.dump）后重新运行即可。",
             )
 
-        output = run.workspace / ".siga-visual" / f"{candidate.name}.png"
+        output = run.workspace / VISUAL_CACHE_DIR / f"{candidate.name}.png"
         try:
             payload = await asyncio.to_thread(
                 _render_in_subprocess, candidate, output, frame
@@ -469,7 +472,7 @@ def create_app(settings: Settings | None = None, harness_url: str | None = None)
     async def get_image(run_id: str, name: str) -> FileResponse:
         """Serve a rendered PNG from the run's cache directory."""
         run = _require(runs, run_id, resolved)
-        path = run.workspace / ".siga-visual" / f"{Path(name).name}.png"
+        path = run.workspace / VISUAL_CACHE_DIR / f"{Path(name).name}.png"
         if not path.is_file():
             raise HTTPException(status_code=404, detail="尚未渲染该文件")
         return FileResponse(path, media_type="image/png")
@@ -610,6 +613,29 @@ RUN_ID_PREFIX = "run-"
 #: is exactly what a researcher returning to a run needs to know, and what an
 #: ablation needs in order to attribute a result.
 METADATA_NAME = "run.json"
+
+#: Where rendered PNGs are cached inside a run's workspace. Named once so the
+#: renderer and the file listing cannot disagree about what is a cache.
+VISUAL_CACHE_DIR = ".siga-visual"
+
+
+def _workspace_files(workspace: Path) -> list[dict[str, Any]]:
+    """Every file the run produced, excluding what it did not.
+
+    Two things live in the workspace without being simulation output: the
+    metadata this console writes, and the PNG cache from rendering. Both are
+    real files, and counting them made a run that wrote five outputs report
+    nine — while the count is the one thing the panel is for.
+    """
+    files: list[dict[str, Any]] = []
+    for path in sorted(workspace.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(workspace)
+        if relative.name == METADATA_NAME or VISUAL_CACHE_DIR in relative.parts:
+            continue
+        files.append({"name": relative.as_posix(), "size": path.stat().st_size})
+    return files
 
 
 def _write_metadata(run: "Run") -> None:
