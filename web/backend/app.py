@@ -1168,6 +1168,15 @@ def _render_in_subprocess(source: Path, output: Path, frame: int | None) -> dict
             result_path.unlink(missing_ok=True)
         if not payload.get("ok"):
             raise VisualisationError(payload.get("error") or "渲染失败")
+        # The image is good, but the renderer did not exit cleanly. That has been
+        # seen: OVITO tears down Qt at interpreter shutdown, after the work is
+        # done. Reporting a plain success would hide a crash that the user later
+        # sees as a system dialog asking why Python quit.
+        if completed.returncode < 0:
+            payload["warning"] = (
+                f"图片已生成，但渲染进程在收尾时崩溃"
+                f"（信号 {-completed.returncode}）。这不影响结果，只是 OVITO 退出时的缺陷。"
+            )
         return payload
 
     if completed.returncode < 0:

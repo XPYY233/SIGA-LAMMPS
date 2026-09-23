@@ -21,6 +21,7 @@ with more than one element is ambiguous", the bare `except` turned that into
 
 from __future__ import annotations
 
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -68,18 +69,26 @@ requires_ovito = pytest.mark.skipif(
 # --------------------------------------------------------------------------- #
 
 
-def test_a_segfault_really_does_report_a_negative_returncode() -> None:
-    """The crash handling rests on this: Python reports a signal as -N.
+def test_a_signal_death_really_does_report_a_negative_returncode() -> None:
+    """The crash handling rests on this: Python reports a signal death as -N.
 
-    Asserted by causing a real one, so the assumption cannot rot silently and
-    leave the crash path matching nothing.
+    Asserted with a real signal, so the assumption cannot rot and leave the crash
+    path matching nothing.
+
+    It uses SIGKILL rather than provoking an actual segfault, deliberately. The
+    first version ran `ctypes.string_at(0)`, which does produce a genuine
+    SIGSEGV — and macOS files a crash report for every one. Three suite runs left
+    three "Python quit unexpectedly" dialogs on the machine, blaming a Python
+    that had done nothing wrong. Proving a signal maps to a negative return code
+    does not need a crash to report: SIGKILL is a signal too, and leaves no log.
     """
     completed = subprocess.run(
-        [sys.executable, "-c", "import ctypes; ctypes.string_at(0)"],
+        [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGKILL)"],
         capture_output=True,
     )
-    assert completed.returncode < 0, "a segfault should surface as a negative return code"
-    assert -completed.returncode in (10, 11), "expected SIGBUS or SIGSEGV"
+    assert completed.returncode == -signal.SIGKILL, (
+        "a signal death should surface as the negated signal number"
+    )
 
 
 def test_render_in_subprocess_names_the_signal_instead_of_blaming_the_task(
@@ -274,3 +283,57 @@ def test_the_file_list_reports_sizes(tmp_path: Path) -> None:
     (tmp_path / "traj.dump").write_bytes(b"x" * 1234)
     files = _workspace_files(tmp_path)
     assert files == [{"name": "traj.dump", "size": 1234}]
+
+
+def test_a_clean_render_is_not_marked_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The shutdown-crash note must only appear when the child really crashed."""
+    import json as _json
+    import subprocess as _sp
+
+    from web.backend import app as backend
+
+    source = tmp_path / "traj.dump"
+    source.write_text(MINIMAL_DUMP)
+    output = tmp_path / "out.png"
+
+    def fake_run(argv, **_kwargs):
+        # Stand in for the child: write the result file it would have written.
+        result_path = Path(argv[argv.index("--result") + 1])
+        result_path.write_text(_json.dumps({"ok": True, "atoms": 4}), encoding="utf-8")
+        return _sp.CompletedProcess(args=argv, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    payload = backend._render_in_subprocess(source, output, None)
+    assert payload["atoms"] == 4
+    assert "warning" not in payload
+
+
+def test_a_render_that_crashes_while_cleaning_up_is_still_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OVITO tears down Qt at shutdown, after the image is written.
+
+    The image is usable, so the render is a success — but silently swallowing the
+    crash hides the cause of a "Python quit unexpectedly" dialog the user sees
+    afterwards with nothing to connect it to.
+    """
+    import json as _json
+    import subprocess as _sp
+
+    from web.backend import app as backend
+
+    source = tmp_path / "traj.dump"
+    source.write_text(MINIMAL_DUMP)
+    output = tmp_path / "out.png"
+
+    def fake_run(argv, **_kwargs):
+        result_path = Path(argv[argv.index("--result") + 1])
+        result_path.write_text(_json.dumps({"ok": True, "atoms": 4}), encoding="utf-8")
+        return _sp.CompletedProcess(args=argv, returncode=-11, stdout="", stderr="")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    payload = backend._render_in_subprocess(source, output, None)
+    assert payload["atoms"] == 4, "the image is still usable"
+    assert "信号 11" in payload["warning"]
