@@ -66,6 +66,117 @@ def wait_for(port: int, *, seconds: float, label: str) -> bool:
     return False
 
 
+#: Ports this launcher must never terminate a process on. 3080 is the user's own
+#: DeepSeekHarness GUI, which is a separate application that happens to share a
+#: checkout; killing it would take down the window they are working in.
+PROTECTED_PORTS = frozenset({3080})
+
+#: Command-line fragments that identify a process as *this* repository's own
+#: harness or console. Matching on these is what makes automatic cleanup safe:
+#: an unrecognised process on the port is never touched, only reported.
+_OWN_MARKERS = (
+    ("apps/cli/src/bin.ts", "siga-patch.yml"),   # our harness, with our overlay
+    ("uvicorn", "web.backend.app"),              # our console
+)
+
+
+def port_holder(port: int) -> tuple[int, str] | None:
+    """The PID and command line listening on *port*, if anything is."""
+    try:
+        listing = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in listing.stdout.split():
+        if not line.strip().isdigit():
+            continue
+        pid = int(line)
+        try:
+            described = subprocess.run(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        command = described.stdout.strip()
+        if command:
+            return pid, command
+    return None
+
+
+def is_our_process(command: str) -> bool:
+    """Whether a command line is this project's own harness or console.
+
+    Deliberately strict. Automatic cleanup is offered for leftovers from a
+    previous session, so anything that cannot be positively identified as ours is
+    reported instead of killed — a stranger's server on the port is not ours to
+    stop.
+    """
+    return any(all(marker in command for marker in group) for group in _OWN_MARKERS)
+
+
+def reclaim_port(port: int, label: str) -> str | None:
+    """Terminate a stale instance of our own on *port*.
+
+    Returns a description of what was stopped, or None if the port was already
+    free. Raises when the occupant is not ours, because that is a decision for
+    the person running this, not for the launcher.
+    """
+    if port in PROTECTED_PORTS:
+        raise StartupError(
+            f"拒绝操作端口 {port}：那是你日常使用的 GUI。"
+            "本程序只会使用 3081（harness）和 8090（控制台）。"
+        )
+    if port_free(port):
+        return None
+    holder = port_holder(port)
+    if holder is None:
+        raise StartupError(f"端口 {port}（{label}）被占用，但无法确定是哪个进程。")
+    pid, command = holder
+    if not is_our_process(command):
+        raise StartupError(
+            f"端口 {port}（{label}）被另一个程序占用，我不会动它：\n"
+            f"  PID {pid}: {command[:120]}\n"
+            f"请自行关闭它，或用 --console-port / --harness-port 换端口。"
+        )
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError as exc:
+        raise StartupError(f"无法结束残留进程 {pid}：{exc}") from exc
+    for _ in range(20):
+        if port_free(port):
+            return f"PID {pid}（{label} 残留进程）"
+        time.sleep(0.5)
+    # It ignored SIGTERM. Escalate, since we have already established it is ours.
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+    for _ in range(10):
+        if port_free(port):
+            return f"PID {pid}（{label} 残留进程，需强制结束）"
+        time.sleep(0.5)
+    raise StartupError(f"残留进程 {pid} 无法结束，请手动执行：kill -9 {pid}")
+
+
+def console_is_up(port: int) -> bool:
+    """Whether a *working* console already answers on this port.
+
+    Distinguishes the two cases that used to look identical: a leftover process
+    holding the port, and the workbench already running. Only the first should be
+    cleared away; the second should just be opened.
+    """
+    if port in PROTECTED_PORTS or port_free(port):
+        return False
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=3) as reply:
+            return reply.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
 def _exit_description(returncode: int | None) -> str:
     """Describe how a child ended, naming signals instead of negative numbers.
 
@@ -107,7 +218,9 @@ def load_api_key() -> str:
     return key
 
 
-def preflight(harness_port: int, console_port: int, configuration: str) -> None:
+def preflight(
+    harness_port: int, console_port: int, configuration: str, *, replace: bool = False
+) -> None:
     """Fail before starting anything, with an actionable reason."""
     if not VENV_PYTHON.is_file():
         raise StartupError(
@@ -122,10 +235,20 @@ def preflight(harness_port: int, console_port: int, configuration: str) -> None:
     if not (HARNESS_ROOT / "node_modules" / ".bin" / "tsx").is_file():
         raise StartupError(f"{HARNESS_ROOT} 尚未安装依赖，请先在该目录执行 pnpm install。")
     for port, label in ((harness_port, "harness"), (console_port, "控制台")):
-        if not port_free(port):
-            raise StartupError(
-                f"端口 {port}（{label}）已被占用。换一个端口，或先关掉占用它的进程。"
+        if port_free(port):
+            continue
+        if not replace:
+            holder = port_holder(port)
+            who = f"\n  当前占用者：PID {holder[0]}: {holder[1][:100]}" if holder else ""
+            hint = (
+                "加 --replace 可自动清理本项目的残留进程（本程序只结束能确认属于自己的进程）。"
+                if holder and is_our_process(holder[1])
+                else "换一个端口，或先关掉占用它的进程。"
             )
+            raise StartupError(f"端口 {port}（{label}）已被占用。{who}\n{hint}")
+        stopped = reclaim_port(port, label)
+        if stopped:
+            print(f"  已清理{stopped}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,10 +260,31 @@ def main(argv: list[str] | None = None) -> int:
         help="挂载哪个 adapter 配置（vanilla / m / mr / mrsx）",
     )
     parser.add_argument("--no-browser", action="store_true", help="不要自动打开浏览器")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="自动清理本项目上次退出时残留的进程（只结束能确认属于自己的进程）",
+    )
     args = parser.parse_args(argv)
 
+    # Already running is not an error. Double-clicking the launcher a second time
+    # should show the workbench, not a port conflict — and that conflict is what
+    # the old message reduced to "close whatever is using it", which is exactly
+    # the leftover-from-last-time case the user cannot act on.
+    if console_is_up(args.console_port):
+        url = f"http://127.0.0.1:{args.console_port}"
+        print(f"\n控制台已经在运行：{url}\n（如需重启，先按 Ctrl-C 停止原来的窗口，或用 --replace 强制重启）\n")
+        if not args.no_browser:
+            try:
+                import webbrowser
+
+                webbrowser.open(url)
+            except Exception:  # noqa: BLE001 - opening a browser is a convenience
+                pass
+        return 0
+
     try:
-        preflight(args.harness_port, args.console_port, args.configuration)
+        preflight(args.harness_port, args.console_port, args.configuration, replace=args.replace)
         api_key = load_api_key()
     except StartupError as exc:
         print(f"\n启动失败：{exc}\n", file=sys.stderr)
@@ -245,36 +389,43 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001 - opening a browser is a convenience
             pass
 
+    reported: set[str] = set()
     try:
-        # Wait on either child, so a crashed one surfaces instead of leaving a
-        # half-dead pair nobody notices.
-        while all(process.poll() is None for _, process in processes):
+        while True:
+            alive = [(name, proc) for name, proc in processes if proc.poll() is None]
+            for name, process in processes:
+                if process.poll() is None or name in reported:
+                    continue
+                reported.add(name)
+                other = "console" if name == "harness" else "harness"
+                print(f"\n{name} 已退出：{_exit_description(process.returncode)}", file=sys.stderr)
+                if name == "harness":
+                    tail = harness_log_path.read_text(errors="replace").strip().splitlines()
+                    for line in tail[-8:]:
+                        print(f"  {line}", file=sys.stderr)
+                    print(f"  （完整输出：{harness_log_path}）", file=sys.stderr)
+
+                # The surviving half is left running on purpose. Tearing it down
+                # turns one crash into a total outage, and it destroys the one
+                # thing still working: after a console segfault the harness was
+                # killed too, so an unrelated threading bug looked like "the
+                # harness keeps dying" and the evidence went with it.
+                if alive:
+                    url = f"http://127.0.0.1:{args.console_port}"
+                    print(
+                        f"\n{other} 仍在运行，未受影响："
+                        + (url if other == "console" else f"端口 {args.harness_port}")
+                        + "\n按 Ctrl-C 停止全部。",
+                        file=sys.stderr,
+                    )
+
+            # Keep waiting while anything is still alive. Exiting this loop on the
+            # first death and falling through to `shutdown()` would kill the
+            # survivor immediately — which is exactly the behaviour the paragraph
+            # above says it is not doing.
+            if not alive:
+                break
             time.sleep(1.0)
-
-        for name, process in processes:
-            if process.poll() is None:
-                continue
-            other = "console" if name == "harness" else "harness"
-            print(f"\n{name} 已退出：{_exit_description(process.returncode)}", file=sys.stderr)
-            if name == "harness":
-                tail = harness_log_path.read_text(errors="replace").strip().splitlines()
-                for line in tail[-8:]:
-                    print(f"  {line}", file=sys.stderr)
-                print(f"  （完整输出：{harness_log_path}）", file=sys.stderr)
-
-            # The surviving half is left running on purpose. Tearing it down
-            # turns one crash into a total outage, and it destroys the one thing
-            # still working: after a console segfault the harness was killed
-            # too, so an unrelated threading bug looked like "the harness keeps
-            # dying" and the evidence went with it.
-            if any(p.poll() is None for _, p in processes):
-                url = f"http://127.0.0.1:{args.console_port}"
-                print(
-                    f"\n{other} 仍在运行，未受影响："
-                    + (url if other == "console" else f"端口 {args.harness_port}")
-                    + "\n按 Ctrl-C 停止全部。",
-                    file=sys.stderr,
-                )
     except KeyboardInterrupt:
         pass
     finally:
