@@ -162,26 +162,18 @@ def _roster_form(overlay: str, profile: str) -> str:
     """
     if profile != "web":
         return overlay
-    # Unwrap the insert block, since the web-app bundle already mounts a roster
-    # and inserting a second one is a duplicate-id error.
+    # Keep the insert block. Only the roster row below is removed.
+    #
+    # An earlier version unwrapped this block as well, which turned the component
+    # rows into patches against ids that do not exist in the web profile. A patch
+    # for a missing id does nothing and says nothing, so the harness booted
+    # cleanly with the adapter entirely absent: no memory section, no MCP tools,
+    # and no error anywhere. The components have to be inserted here exactly as
+    # they are under headless.
     lines = overlay.split("\n")
-    unwrapped: list[str] = []
-    unwrapping = False
-    for line in lines:
-        if line.strip() == "- insert:":
-            unwrapping = True
-            continue
-        if unwrapping:
-            if line.startswith("    "):
-                unwrapped.append(line[4:])
-                continue
-            if line.strip() == "":
-                unwrapped.append(line)
-                continue
-            unwrapping = False
-        unwrapped.append(line)
+    unwrapped = list(lines)
 
-    # Then drop the roster row entirely. It does not work here: the web roster
+    # Drop the roster row. It does not work here: the web roster
     # resolves the harness's own shipped presets and ignores our roots, so both
     # an explicit `agentPreset` and the row's own `default` name a preset that
     # cannot be found and every session creation fails. The web overlay does not
@@ -191,11 +183,15 @@ def _roster_form(overlay: str, profile: str) -> str:
     out: list[str] = []
     skipping = False
     for line in unwrapped:
-        if line.startswith("- id: agent-presets"):
+        # The row is indented inside the insert block, so matching only an
+        # unindented line missed it and the roster came back — which is the
+        # duplicate-id failure this removal exists to prevent.
+        if line.lstrip().startswith("- id: agent-presets"):
             skipping = True
             continue
         if skipping:
-            if line.startswith(("  ", "\t")) or line.strip() == "":
+            # Skip the row's own deeper-indented lines, then resume.
+            if line.startswith(("      ", "        ", "\t")) or line.strip() == "":
                 continue
             skipping = False
         out.append(line)
